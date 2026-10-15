@@ -1,0 +1,26 @@
+import { requireRole, requireUser } from '../../_lib/supabase.js';
+import { methodNotAllowed, readBody, sendError } from '../../_lib/http.js';
+
+const decisions = new Set(['request_more_evidence','release_payout','refund_full','refund_partial','split']);
+export default async function handler(req, res) {
+  if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
+  try {
+    const { userClient, user } = await requireUser(req);
+    await requireRole(userClient, user.id, 'admin');
+    const body = await readBody(req);
+    if (!isUuid(body.disputeId) || !decisions.has(String(body.decision))) return res.status(400).json({ error: 'A valid dispute and decision are required.' });
+    const reason = String(body.reason || '').trim();
+    if (reason.length < 5 || reason.length > 2000) return res.status(400).json({ error: 'An audit reason between 5 and 2,000 characters is required.' });
+    const refundAmount = Number(body.refundAmountKobo || 0);
+    if (!Number.isSafeInteger(refundAmount) || refundAmount < 0) return res.status(400).json({ error: 'Refund amount must be integer kobo.' });
+    const { data, error } = await userClient.rpc('admin_resolve_dispute', {
+      p_dispute_id: body.disputeId,
+      p_decision: body.decision,
+      p_reason: reason,
+      p_refund_amount_kobo: refundAmount,
+    });
+    if (error) throw error;
+    return res.status(200).json(data);
+  } catch (error) { return sendError(res, error, 'Dispute action could not be recorded.'); }
+}
+function isUuid(value) { return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || '')); }
