@@ -43,6 +43,6 @@ The SQL files use the Supabase platform roles, `auth` schema and `storage` schem
 
 ## Vercel and owner launch tasks
 
-Configure the project root as the repository root, `npm run build`, and `dist` as output. Set public Supabase URL/anon key only in `VITE_` variables; set service-role, payment, cron, OTP HMAC and mail secrets server-side only. Configure Vercel Cron for `/api/cron/marketplace-maintenance` and set a high-entropy `CRON_SECRET`.
+Configure the project root as the repository root, `npm run build`, and `dist` as output. Set public Supabase URL/anon key only in `VITE_` variables; set service-role, payment, cron, OTP HMAC and mail secrets server-side only. Configure Vercel Cron for `/api/cron/marketplace-maintenance` and set a high-entropy `CRON_SECRET`. There is deliberately no environment flag for booking or cancellation-policy approval: those gates are in `public.platform_settings`. Payments require both the database setting and server-side `PAYMENT_ENABLED=true`; leave them disabled until staging tests, policy approval and reconciliation are complete.
 
 A real launch still needs owner-controlled database/auth/storage and RLS review, approved merchant/payout accounts, real approved inventory, legal review of draft terms/privacy/cancellation policies, email and domain configuration, support/admin operations, incident/retention decisions, and end-to-end test transactions with reconciliation. No live payment, escrow, payout, verification, support hours, office address, domain ownership or traction is claimed by this code.
