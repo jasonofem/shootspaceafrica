@@ -69,13 +69,31 @@ How it works: handler code lives in `api/_lib/endpoints/*.js` (files under `_lib
 
 Adding or changing an endpoint: add the handler to the matching module in `api/_lib/endpoints/`, register the route key in that module's route table, and add the `vercel.json` rewrite. `npm test` fails if a frontend `/api/` call has no rewrite, if a rewrite points at a missing route key, if a route key is unreachable, if the SPA rewrite or the cron schedule changed, or if `api/` grows past 12 function files. Verify with `find api -name '*.js' -not -path '*/_lib/*' | wc -l`.
 
-No environment variable was added, renamed or removed by this grouping. Server-side secrets stay server-side: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `OTP_HMAC_SECRET`, `CONTACT_RATE_LIMIT_SECRET`, `CRON_SECRET`, `PAYMENT_PROVIDER`, `PAYSTACK_SECRET_KEY`, `PAYMENT_RETURN_URL`, `PAYMENT_ENABLED` (optional: `CONTACT_NOTIFICATION_TO`, `OTP_TTL_MINUTES`, `RESEND_API_KEY`, `MAIL_FROM`). Browser-visible values stay `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
+No environment variable was added, renamed or removed by this grouping. Server-side secrets stay server-side: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `OTP_HMAC_SECRET`, `CONTACT_RATE_LIMIT_SECRET`, `CRON_SECRET`, `PAYMENT_PROVIDER`, `PAYSTACK_SECRET_KEY`, `PAYMENT_RETURN_URL`, `PAYMENT_ENABLED`, `OTP_TTL_MINUTES` (required for check-in codes: whole minutes, 1–360) (optional: `CONTACT_NOTIFICATION_TO`, `RESEND_API_KEY`, `MAIL_FROM`). Browser-visible values stay `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
 
 If the Vercel project is deleted and re-imported, the site gets a new address. Update `PAYMENT_RETURN_URL` (`https://<site>/booking-confirmed`), the Paystack webhook URL (`https://<site>/api/webhooks/paystack`), and the Supabase Auth Site URL and Redirect URLs to the new address.
 
 ## Vercel and owner launch tasks
 
 Configure the project root as the repository root, `npm run build`, and `dist` as output. Set public Supabase URL/anon key only in `VITE_` variables; set service-role, payment, cron, OTP HMAC and mail secrets server-side only. Configure Vercel Cron for `/api/cron/marketplace-maintenance` and set a high-entropy `CRON_SECRET`. There is deliberately no environment flag for booking or cancellation-policy approval: those gates are in `public.platform_settings`. Payments require both the database setting and server-side `PAYMENT_ENABLED=true`; leave them disabled until staging tests, policy approval and reconciliation are complete.
+
+### Check-in (OTP) setup
+
+Check-in codes need three settings. If any is missing, the check-in room says so instead of issuing codes:
+
+1. **Vercel environment variable** `OTP_HMAC_SECRET` — at least 32 random characters (server-only). Already set if the site issues anything past "Secure check-in codes are not configured yet."
+2. **Vercel environment variable** `OTP_TTL_MINUTES` — a whole number of minutes from 1 to 360 (for example `10`). Without it, "Generate a creator check-in code" answers *"Check-in codes are not set up yet…"*. After adding or changing it, redeploy — environment variables are read at deploy time.
+3. **Database check-in window** — run once in the Supabase SQL editor (use the same minutes as `OTP_TTL_MINUTES`):
+
+   ```sql
+   update public.platform_settings
+   set otp_ttl_minutes = 10,
+       otp_window_before_minutes = 120,
+       otp_window_after_minutes = 120
+   where id = true;
+   ```
+
+Codes can only be created inside the check-in window: from `otp_window_before_minutes` before the booking starts until `otp_window_after_minutes` after it ends. That is deliberate — a booking a week away cannot get a code today. To rehearse with a future booking, temporarily widen the window (for example `otp_window_before_minutes = 20160` for 14 days) and set it back afterwards, or use a test booking that starts within the window. Codes expire after `OTP_TTL_MINUTES` minutes, one code per minute and five per hour per booking, and only the booking's creator can issue one and only its host can verify it.
 
 A real launch still needs owner-controlled database/auth/storage and RLS review, approved merchant/payout accounts, real approved inventory, legal review of draft terms/privacy/cancellation policies, email and domain configuration, support/admin operations, incident/retention decisions, and end-to-end test transactions with reconciliation. No live payment, escrow, payout, verification, support hours, office address, domain ownership or traction is claimed by this code.
 

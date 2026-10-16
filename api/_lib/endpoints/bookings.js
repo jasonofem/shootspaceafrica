@@ -92,7 +92,7 @@ export async function bookingOtp(req, res) {
     if (!isUuid(body.bookingId)) return res.status(400).json({ error: 'Booking id is required.' });
     if (body.action === 'issue') {
       const ttl = Number.parseInt(process.env.OTP_TTL_MINUTES || '', 10);
-      if (!Number.isInteger(ttl) || ttl < 1 || ttl > 360) return res.status(503).json({ error: 'The check-in window has not been configured.' });
+      if (!Number.isInteger(ttl) || ttl < 1 || ttl > 360) return res.status(503).json({ error: 'Check-in codes are not set up yet. The platform owner must configure the check-in window (OTP_TTL_MINUTES on the server and the check-in window settings in the database) before codes can be generated.' });
       const code = randomInt(0, 1_000_000).toString().padStart(6, '0');
       const expiresAt = new Date(Date.now() + ttl * 60_000).toISOString();
       const hash = hashCode(key, body.bookingId, code);
