@@ -4,6 +4,7 @@
 //   POST /api/host/listings               -> host-listings-create
 //   POST /api/host/listings/photo         -> host-listing-photo
 //   POST /api/host/listings/submit        -> host-listing-submit
+//   POST /api/host/listings/change-request -> host-listing-change-request (edits to a PUBLISHED listing need owner approval)
 import { randomUUID } from 'node:crypto';
 import { requireUser } from '../supabase.js';
 import { methodNotAllowed, readBody, sendError } from '../http.js';
@@ -103,6 +104,24 @@ const documentTypes = new Set(['government_id', 'proof_of_address', 'ownership_a
 function slugify(value) { return value.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 80) || 'location'; }
 function isUuid(value) { return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || '')); }
 
+// Proposed edits to a live listing. Nothing changes until an admin approves; the database function
+// request_listing_change re-checks every field and the reason.
+export async function requestListingChange(req, res) {
+  if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
+  try {
+    const { userClient } = await requireUser(req);
+    const body = await readBody(req);
+    if (!isUuid(body.listingId)) return res.status(400).json({ error: 'Listing id is required.' });
+    const reason = String(body.reason || '').trim();
+    if (reason.length < 10 || reason.length > 2000) return res.status(400).json({ error: 'Explain why the change is needed (10–2,000 characters).' });
+    const changes = body.changes && typeof body.changes === 'object' && !Array.isArray(body.changes) ? body.changes : null;
+    if (!changes || JSON.stringify(changes).length > 20000) return res.status(400).json({ error: 'Choose at least one field to change.' });
+    const { data, error } = await userClient.rpc('request_listing_change', { p_listing_id: body.listingId, p_changes: changes, p_reason: reason });
+    if (error) throw error;
+    return res.status(201).json({ ...data, message: 'Change sent to the platform owner for approval. The live listing is unchanged until it is approved.' });
+  } catch (error) { return sendError(res, error, 'Change request could not be submitted.'); }
+}
+
 export const hostRoutes = {
   defaultRoute: null,
   routes: {
@@ -111,5 +130,6 @@ export const hostRoutes = {
     'host-listings-create': createListingDraft,
     'host-listing-photo': registerListingPhoto,
     'host-listing-submit': submitListing,
+    'host-listing-change-request': requestListingChange,
   },
 };

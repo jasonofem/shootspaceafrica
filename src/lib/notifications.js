@@ -28,6 +28,13 @@ const NOTIFICATION_TITLES = Object.freeze({
   listing_review_changes_requested: 'Your listing needs changes',
   listing_review_rejected: 'Your listing was rejected',
   listing_review_paused: 'Your listing was paused',
+  listing_change_requested: 'A host asked to change a live listing',
+  listing_change_approved: 'Your requested listing change was approved',
+  listing_change_rejected: 'Your requested listing change was not approved',
+  withdrawal_requested: 'A withdrawal request needs your review',
+  withdrawal_approved: 'Your withdrawal request was approved',
+  withdrawal_paid: 'Your withdrawal was marked paid',
+  withdrawal_rejected: 'Your withdrawal request was not approved',
   listing_submitted: 'A listing was submitted for review',
 });
 

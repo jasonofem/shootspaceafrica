@@ -47,6 +47,12 @@ function publicErrorMessage(message, status) {
     'otp_issue_rate_limited', 'otp_issue_hourly_limit_reached', 'outside_checkin_window', 'booking_not_ready_for_completion', 'booking_not_ready_to_complete',
     'open_dispute_holds_completion', 'booking_not_disputable', 'host_terms_required',
     'host_role_required', 'admin_role_required', 'listing_review_requirements_not_met',
+    'booking_total_too_large', 'booking_policy_not_configured', 'listing_not_found',
+    'invalid_listing_change', 'listing_change_already_pending', 'listing_change_not_found', 'listing_change_not_open',
+    'listing_not_published', 'invalid_listing_change_review',
+    'no_eligible_payouts', 'no_available_commission', 'withdrawal_not_open', 'invalid_withdrawal_decision',
+    'withdrawal_reference_required', 'withdrawal_reference_already_used', 'withdrawal_item_not_eligible',
+    'withdrawal_not_found', 'withdrawal_rate_limited',
   ]);
   if (known.has(message)) return message.replaceAll('_', ' ');
   if (status >= 500) return 'The service is not configured or is temporarily unavailable. Please try again later.';
