@@ -127,31 +127,53 @@ async function creatorSummary(client, userId) {
 
 async function hostSummary(client, userId) {
   const now = new Date().toISOString();
-  const [bookings, listings, payouts, profile] = await Promise.all([
+  const [bookings, listings, payouts, profile, changeRequests, withdrawals] = await Promise.all([
     client.from('bookings').select('id,public_code,listing_id,listing_title_snapshot,listing_city_snapshot,listing_neighbourhood_snapshot,starts_at,ends_at,booking_status,payment_status,payout_status,crew_size,production_type,host_share_kobo_snapshot,total_amount_kobo').eq('host_id', userId).order('starts_at', { ascending: true }).limit(150),
-    client.from('listings').select('id,slug,title,status,city,neighbourhood,hourly_rate_kobo').eq('owner_id', userId).order('created_at', { ascending: false }).limit(100),
-    client.from('payouts').select('amount_kobo,status').eq('host_id', userId).limit(1000),
+    client.from('listings').select('id,slug,title,status,city,neighbourhood,hourly_rate_kobo,min_hours,crew_capacity,description,public_location,category,house_rules').eq('owner_id', userId).order('created_at', { ascending: false }).limit(100),
+    client.from('payouts').select('id,booking_id,amount_kobo,status,bookings(booking_status,payment_status)').eq('host_id', userId).limit(1000),
     client.from('host_profiles').select('public_display_name,verification_status,review_reason').eq('user_id', userId).maybeSingle(),
+    client.from('listing_change_requests').select('id,listing_id,proposed_changes,reason,status,review_reason,created_at,reviewed_at').eq('requested_by', userId).order('created_at', { ascending: false }).limit(100),
+    client.from('withdrawal_requests').select('id,amount_kobo,status,note,payment_reference,requested_at,paid_at,review_reason').eq('requester_id', userId).eq('requester_role', 'host').order('requested_at', { ascending: false }).limit(50),
   ]);
-  for (const result of [bookings, listings, payouts, profile]) if (result.error) throw result.error;
+  for (const result of [bookings, listings, payouts, profile, changeRequests, withdrawals]) if (result.error) throw result.error;
   const sessions = bookings.data || [];
   const payoutRows = payouts.data || [];
   const livePaidStatuses = new Set(['confirmed', 'checked_in', 'completion_pending', 'completed', 'disputed']);
   const livePaidSessions = sessions.filter((item) => item.payment_status === 'paid' && livePaidStatuses.has(item.booking_status));
+  // Same rule the withdrawal request applies: payout eligible AND the booking is still completed and paid (a dispute moves it out of 'completed').
+  const requestablePayouts = payoutRows.filter((item) => item.status === 'eligible' && item.bookings?.booking_status === 'completed' && item.bookings?.payment_status === 'paid');
   return {
     metrics: {
       hostShareKobo: sumKobo(livePaidSessions, (item) => item.host_share_kobo_snapshot),
       paidOutKobo: sumKobo(payoutRows.filter((item) => item.status === 'paid'), (item) => item.amount_kobo),
+      payoutPaidKobo: sumKobo(payoutRows.filter((item) => item.status === 'paid'), (item) => item.amount_kobo),
       payoutHeldKobo: sumKobo(livePaidSessions.filter((item) => item.payout_status === 'held'), (item) => item.host_share_kobo_snapshot),
       payoutEligibleKobo: sumKobo(livePaidSessions.filter((item) => item.payout_status === 'eligible'), (item) => item.host_share_kobo_snapshot),
+      payoutAvailableKobo: sumKobo(requestablePayouts, (item) => item.amount_kobo),
+      payoutRequestedKobo: sumKobo(payoutRows.filter((item) => item.status === 'queued'), (item) => item.amount_kobo),
       upcomingBookings: sessions.filter((item) => item.starts_at >= now && !['cancelled', 'declined', 'expired'].includes(item.booking_status)).length,
       completedShoots: sessions.filter((item) => item.booking_status === 'completed').length,
       listings: (listings.data || []).length,
     },
+    payoutsByStatus: summarisePayouts(payoutRows),
+    withdrawals: withdrawals.data || [],
+    listingChangeRequests: changeRequests.data || [],
     bookings: sessions,
     listings: listings.data || [],
     host: profile.data || null,
   };
+}
+
+// Count and total per payout status, for the host's "Payouts & withdrawals" panel.
+function summarisePayouts(rows) {
+  const out = {};
+  for (const row of rows) {
+    const key = row.status || 'unknown';
+    out[key] = out[key] || { count: 0, amountKobo: '0' };
+    out[key].count += 1;
+    out[key].amountKobo = (BigInt(out[key].amountKobo) + BigInt(row.amount_kobo || 0)).toString();
+  }
+  return out;
 }
 
 function sumKobo(rows, getValue) {
@@ -159,7 +181,7 @@ function sumKobo(rows, getValue) {
 }
 
 async function adminSummary(client) {
-  const [listings, hosts, bookings, payments, disputes, payouts, contacts] = await Promise.all([
+  const [listings, hosts, bookings, payments, disputes, payouts, contacts, withdrawals, commissionClaims, changeRequests] = await Promise.all([
     client.from('listings').select('id,title,slug,owner_id,status,city,neighbourhood,created_at').eq('status', 'submitted').order('submitted_at', { ascending: true }).limit(100),
     client.from('host_profiles').select('user_id,public_display_name,verification_status,created_at').eq('verification_status', 'pending').order('created_at', { ascending: true }).limit(100),
     client.from('bookings').select('id,public_code,booking_status,payment_status,payout_status,total_amount_kobo,commission_kobo_snapshot,creator_fee_kobo,starts_at,ends_at,listing_title_snapshot,host_share_kobo_snapshot').order('created_at', { ascending: false }).limit(1000),
@@ -167,28 +189,64 @@ async function adminSummary(client) {
     client.from('disputes').select('id,booking_id,opened_by,dispute_type,description,status,created_at,refund_amount_kobo').order('created_at', { ascending: false }).limit(100),
     client.from('payouts').select('id,booking_id,host_id,amount_kobo,status').order('created_at', { ascending: false }).limit(1000),
     client.from('contact_requests').select('id,full_name,email,phone,subject,message,status,created_at').order('created_at', { ascending: false }).limit(100),
+    client.from('withdrawal_requests').select('id,requester_id,requester_role,amount_kobo,status,note,payment_reference,requested_at,reviewed_at,paid_at,review_reason').order('requested_at', { ascending: false }).limit(200),
+    client.from('withdrawal_request_commissions').select('booking_id').limit(5000),
+    client.from('listing_change_requests').select('id,listing_id,requested_by,proposed_changes,reason,status,created_at').eq('status', 'pending').order('created_at', { ascending: true }).limit(100),
   ]);
-  for (const result of [listings, hosts, bookings, payments, disputes, payouts, contacts]) if (result.error) throw result.error;
+  for (const result of [listings, hosts, bookings, payments, disputes, payouts, contacts, withdrawals, commissionClaims, changeRequests]) if (result.error) throw result.error;
   const bookingRows = bookings.data || [];
   const paymentRows = payments.data || [];
   const payoutRows = payouts.data || [];
+  const withdrawalRows = withdrawals.data || [];
   const bookingById = new Map(bookingRows.map((item) => [item.id, item]));
   const disputeRows = (disputes.data || []).map((item) => ({ ...item, total_amount_kobo: bookingById.get(item.booking_id)?.total_amount_kobo || '0' }));
   const livePaidStatuses = new Set(['confirmed', 'checked_in', 'completion_pending', 'completed', 'disputed']);
+
+  // Company commission: earned = captured and live; available = matured exactly like host payouts and not yet claimed.
+  const claimedBookingIds = new Set((commissionClaims.data || []).map((row) => row.booking_id));
+  const commissionEarnedRows = bookingRows.filter((item) => item.payment_status === 'paid' && livePaidStatuses.has(item.booking_status));
+  const commissionAvailableRows = bookingRows.filter((item) => item.payment_status === 'paid' && item.booking_status === 'completed'
+    && ['eligible', 'queued', 'processing', 'paid'].includes(item.payout_status) && !claimedBookingIds.has(item.id));
+  const companyRequests = withdrawalRows.filter((item) => item.requester_role === 'platform');
+
+  // Change requests with the live listing values, so the admin can see old -> new.
+  const changeRows = changeRequests.data || [];
+  const changeListingIds = [...new Set(changeRows.map((row) => row.listing_id))];
+  const changeListings = changeListingIds.length
+    ? await client.from('listings').select('id,title,owner_id,hourly_rate_kobo,min_hours,crew_capacity,description,public_location,category,house_rules').in('id', changeListingIds)
+    : { data: [], error: null };
+  if (changeListings.error) throw changeListings.error;
+  const listingById = new Map((changeListings.data || []).map((row) => [row.id, row]));
+
   return {
     metrics: {
       listingReviewQueue: (listings.data || []).length,
       hostReviewQueue: (hosts.data || []).length,
+      listingChangeQueue: changeRows.length,
+      withdrawalQueue: withdrawalRows.filter((item) => ['pending', 'approved'].includes(item.status)).length,
       bookings: bookingRows.length,
       capturedPaymentsKobo: sumKobo(paymentRows.filter((item) => item.status === 'paid'), (item) => item.amount_kobo),
-      commissionKobo: sumKobo(bookingRows.filter((item) => item.payment_status === 'paid' && livePaidStatuses.has(item.booking_status)), (item) => item.commission_kobo_snapshot),
+      commissionEarnedKobo: sumKobo(commissionEarnedRows, (item) => item.commission_kobo_snapshot),
+      commissionAvailableKobo: sumKobo(commissionAvailableRows, (item) => item.commission_kobo_snapshot),
+      commissionRequestedKobo: sumKobo(companyRequests.filter((item) => ['pending', 'approved'].includes(item.status)), (item) => item.amount_kobo),
+      commissionWithdrawnKobo: sumKobo(companyRequests.filter((item) => item.status === 'paid'), (item) => item.amount_kobo),
       latePaidBookings: bookingRows.filter((item) => item.payment_status === 'paid' && !livePaidStatuses.has(item.booking_status)).length,
       openDisputes: disputeRows.filter((item) => !['resolved', 'closed'].includes(item.status)).length,
       payoutHeld: bookingRows.filter((item) => item.payout_status === 'held' && item.payment_status === 'paid' && livePaidStatuses.has(item.booking_status)).length,
       payoutsProcessing: payoutRows.filter((item) => ['eligible', 'queued', 'processing'].includes(item.status)).length,
       contactQueue: (contacts.data || []).filter((item) => item.status === 'new').length,
     },
-    queues: { listings: listings.data || [], hosts: hosts.data || [], disputes: disputeRows, payments: paymentRows, bookings: bookingRows, contacts: contacts.data || [], payouts: payoutRows },
+    queues: {
+      listings: listings.data || [],
+      hosts: hosts.data || [],
+      disputes: disputeRows,
+      payments: paymentRows,
+      bookings: bookingRows,
+      contacts: contacts.data || [],
+      payouts: payoutRows,
+      withdrawals: withdrawalRows,
+      listingChanges: changeRows.map((row) => ({ ...row, listing: listingById.get(row.listing_id) || null })),
+    },
   };
 }
 

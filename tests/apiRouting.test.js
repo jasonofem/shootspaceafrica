@@ -22,9 +22,10 @@ const PUBLIC_URLS = [
   '/api/bookings/request', '/api/bookings/respond', '/api/bookings/cancel', '/api/bookings/completion',
   '/api/bookings/otp', '/api/bookings/disputes', '/api/bookings/dispute-evidence', '/api/bookings/:id',
   '/api/host/onboarding', '/api/host/verification-document', '/api/host/listings',
-  '/api/host/listings/photo', '/api/host/listings/submit',
+  '/api/host/listings/photo', '/api/host/listings/submit', '/api/host/listings/change-request',
   '/api/admin/listings/review', '/api/admin/hosts/review', '/api/admin/disputes/resolve',
-  '/api/payments/initialize', '/api/payments/status',
+  '/api/admin/listings/change-review', '/api/admin/withdrawals/review',
+  '/api/payments/initialize', '/api/payments/status', '/api/payments/withdrawal',
 ];
 
 // Function file -> route table, matching the thin files in api/.

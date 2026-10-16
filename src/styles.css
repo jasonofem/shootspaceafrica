@@ -738,3 +738,21 @@ button.notification-item { cursor: pointer; }
   .confirmed-page h1 { font-size: 28px; }
   .otp-display > strong { font-size: 36px; }
 }
+
+/* Panel heading with an action button on the right (host "Your listings"). */
+.panel-title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.panel-title-row h2 { margin: 0; }
+
+/* Listing row actions (status, pending badge, request-a-change button). */
+.listing-row-actions { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+
+/* Listing change request form and the "current → proposed" comparison. */
+.change-request-form { margin: 12px 0 4px; display: grid; gap: 10px; }
+.change-request-form h3 { margin: 0; }
+.change-diff { display: grid; gap: 6px; margin: 8px 0; }
+.change-diff-row { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(0, 1.2fr) 18px minmax(0, 1.2fr); gap: 8px; align-items: baseline; font-size: 14px; }
+@media (max-width: 640px) { .change-diff-row { grid-template-columns: 1fr; } }
+
+/* Payouts and company commission panels. */
+.payout-stats, .company-commission-panel .stats-grid { margin: 12px 0; }
+.payout-panel h3 { margin-top: 18px; }

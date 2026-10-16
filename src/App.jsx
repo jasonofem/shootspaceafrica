@@ -16,9 +16,11 @@ import { useIsAdmin, useHostProfile, useSession } from './lib/useSession.js';
 import { usePublicListings } from './hooks/usePublicListings.js';
 import { useNotifications } from './lib/useNotifications.js';
 import { formatUnreadCount, notificationBellLabel, notificationTime, notificationTitle } from './lib/notifications.js';
-import { assessTimeSlot, parseNairaToKobo } from './lib/businessRules.js';
+import { assessTimeSlot, calculateBookingBaseKobo, parseNairaToKobo } from './lib/businessRules.js';
 
 const ToastContext = createContext(() => {});
+// Base price = rate per person per hour x hours x crew. Returns 0 for unusable inputs (e.g. sample data) instead of crashing the page.
+function bookingBaseKobo(rateKobo,hours,crew){try{return calculateBookingBaseKobo({hourlyRateKobo:rateKobo,hours,crewSize:crew});}catch{return 0n;}}
 const BOOKING_KEY = 'shootspace.booking-draft';
 const NO_FILTERS = Object.freeze({});
 
@@ -116,6 +118,7 @@ function App() {
         <Route path="/host-dashboard" element={<SiteLayout><HostDashboard /></SiteLayout>} />
         <Route path="/admin-dashboard" element={<SiteLayout><AdminDashboard /></SiteLayout>} />
         <Route path="/host/onboarding" element={<SiteLayout><HostOnboarding /></SiteLayout>} />
+        <Route path="/host/listings/new" element={<SiteLayout><HostOnboarding mode="new-listing" /></SiteLayout>} />
         <Route path="/otp-room" element={<SiteLayout><OtpRoomPage /></SiteLayout>} />
         <Route path="/contact" element={<SiteLayout><ContactPage /></SiteLayout>} />
         <Route path="/dispute" element={<SiteLayout><DisputePage /></SiteLayout>} />
@@ -422,7 +425,7 @@ function SpaceDetailsPage() {
   const slotStatus=availability.data?assessTimeSlot({date,startTime:time,durationHours:hours,openingHours:availability.data.openingHours,busySlots:availability.data.busySlots,blockedIntervals:availability.data.blockedIntervals}):{available:false,reason:availability.error?'Availability cannot be verified.':'Checking published availability…'};
   if(state.loading)return <div className="page-wrap wrap"><LoadingPanel text="Loading published location…"/></div>;
   if(state.error||!space)return <div className="not-found wrap"><div className="confirmed-icon"><Search size={27}/></div><p className="eyebrow">Location unavailable</p><h1>This location is not in public inventory.</h1><p>Only published, host-approved locations can be viewed and requested.</p><Link className="button button-primary" to="/explore">Explore locations <ArrowRight size={15}/></Link></div>;
-  const subtotal=BigInt(space.price||0)*BigInt(hours);
+  const subtotal=bookingBaseKobo(space.price,hours,crew);
   const fees=settings?.creatorFeeApproved?(subtotal*BigInt(settings.creatorFeeBps||0)+5000n)/10000n:0n;
   const requestBooking=()=>{
     if(space.isSample){toast('Development samples are not bookable.');return;}
@@ -443,12 +446,12 @@ function SpaceDetailsPage() {
       <section className="detail-section"><h2>Reviews</h2>{reviewError?<p className="helper-text">Public reviews could not be loaded.</p>:reviews.length?reviews.map((review,index)=><div className="review-card" key={`${review.created_at}-${index}`}><div className="rating-stars" aria-label={`${review.rating} out of 5 stars`}>{Array.from({length:5},(_,star)=><Star key={star} fill={star<review.rating?'currentColor':'none'}/>)}</div><p>{review.body||'Rating only.'}</p><small>Completed booking review · {dateOnly(review.created_at)}</small></div>):<div className="review-card"><p>No public reviews have been published for this location.</p></div>}</section>
       <section className="detail-section"><h2>Location area</h2><div className="location-card"><div className="map-illustration"><div className="map-lines"/><span className="map-pin"><MapPin size={17} fill="currentColor"/></span><span className="map-label">{(space.area||space.city||'Location').toUpperCase()}</span></div><p>{space.city}{space.area?` · ${space.area}`:''}. The exact arrival address is shared only with booking participants after server-confirmed payment.</p></div></section>
     </div>
-    <aside className="booking-card"><div className="booking-rate"><strong>{money(space.price)}</strong><span>/hour</span></div>
+    <aside className="booking-card"><div className="booking-rate"><strong>{money(space.price)}</strong><span>/hour per person</span></div>
       <label className="form-field"><span>Shoot date</span><input type="date" min={futureDate(0)} value={date} onChange={(event)=>setDate(event.target.value)}/></label>
       <label className="form-field"><span>Start time (Lagos time)</span><input type="time" step="3600" value={time} onChange={(event)=>setTime(event.target.value)}/></label>
       <label className="form-field"><span>Booking duration</span><select value={hours} onChange={(event)=>setHours(Number(event.target.value))}>{Array.from({length:Math.max(1,Math.min(24-space.minHours+1,24))},(_,index)=>space.minHours+index).map((hour)=><option value={hour} key={hour}>{hour} hour{hour===1?'':'s'}</option>)}</select></label>
-      <label className="form-field"><span>Crew size · maximum {space.capacity}</span><input type="number" min="1" max={space.capacity||1} value={crew} onChange={(event)=>setCrew(Math.max(1,Math.min(space.capacity||1,Number(event.target.value)||1)))}/></label>
-      <div className="booking-costs"><div><span>Estimated base · {hours} hours</span><strong>{money(subtotal)}</strong></div>{fees>0n&&<div><span>Owner-approved creator fee</span><strong>{money(fees)}</strong></div>}<div className="cost-total"><span>Estimated request total</span><strong>{money(subtotal+fees)}</strong></div><small>Final server calculation is returned with the request. Commission is 15% of booking base (host share 85%).</small></div>
+      <label className="form-field"><span>Crew size · maximum {space.capacity} · price multiplies by crew</span><input type="number" min="1" max={space.capacity||1} value={crew} onChange={(event)=>setCrew(Math.max(1,Math.min(space.capacity||1,Number(event.target.value)||1)))}/></label>
+      <div className="booking-costs"><div><span>{money(space.price)} per person × {hours} hours × {crew} {crew===1?'person':'people'}</span><strong>{money(subtotal)}</strong></div>{fees>0n&&<div><span>Owner-approved creator fee</span><strong>{money(fees)}</strong></div>}<div className="cost-total"><span>Estimated request total</span><strong>{money(subtotal+fees)}</strong></div><small>Base = hourly rate per person × hours × crew size. Final server calculation is returned with the request. Commission is 15% of booking base (host share 85%).</small></div>
       {availability.loading?<p className="booking-secure"><Clock3 size={14}/> Checking published availability…</p>:availability.error?<p className="availability-warning">Availability could not be loaded; requests are paused until it can be checked.</p>:<div className="availability-summary"><strong>{dateOnly(date)}</strong>{dayRules.length?dayRules.map((rule)=><span key={`${rule.opens_at}-${rule.closes_at}`}>{String(rule.opens_at).slice(0,5)}–{String(rule.closes_at).slice(0,5)} Africa/Lagos</span>):<span>No weekly opening hours published for this day.</span>}</div>}
       {availability.data&&<p className={slotStatus.available?'availability-open':'availability-warning'} role="status">{slotStatus.reason}</p>}
       <button type="button" className="button button-primary button-block" disabled={space.isSample||!settings?.bookingEnabled||availability.loading||!availability.data||!slotStatus.available} onClick={requestBooking}>{space.isSample?'Preview only':'Request to book'} <ArrowRight size={16}/></button>
@@ -511,7 +514,7 @@ function CheckoutPage() {
   if(state.loading)return <div className="page-wrap wrap"><LoadingPanel text="Loading booking details…"/></div>;
   const space=state.listings[0];
   if(!space||space.isSample)return <div className="page-wrap wrap"><EmptyPanel title="This location cannot be requested" text="Only real published inventory can proceed to a host request." action={<Link className="button button-primary" to="/explore">Browse published inventory</Link>}/></div>;
-  const subtotal=BigInt(space.price||0)*BigInt(Number(draft.hours||1));
+  const subtotal=bookingBaseKobo(space.price,Number(draft.hours||1),Number(draft.crew||1));
   const fee=settings?.creatorFeeApproved?(subtotal*BigInt(settings.creatorFeeBps||0)+5000n)/10000n:0n;
   const sendRequest=async(event)=>{
     event.preventDefault();setError('');
@@ -538,7 +541,7 @@ function CheckoutPage() {
       {error&&<p className="form-error" role="alert">{error}</p>}
       <button type="submit" className="button button-primary" disabled={working||!settings?.bookingEnabled}>{working?'Sending request…':'Send booking request'} <ArrowRight size={15}/></button>
     </form>
-  </div><aside className="panel checkout-total-card"><h2>Estimated amount</h2><div className="cost-row"><span>{money(space.price)} × {draft.hours} hours</span><strong>{money(subtotal)}</strong></div>{fee>0n&&<div className="cost-row"><span>Owner-approved creator fee</span><strong>{money(fee)}</strong></div>}<div className="cost-total"><span>Estimated total</span><strong>{money(subtotal+fee)}</strong></div><div className="checkout-assurances"><div><Shield size={15}/>No payment at request stage</div><div><CheckCircle2 size={15}/>Request reviewed by the host</div><div><Clock3 size={15}/>Availability rechecked by server</div></div><p className="helper-text">15% commission is calculated on the booking base. The host share is 85%. This estimate is not a payment receipt.</p></aside></div>;
+  </div><aside className="panel checkout-total-card"><h2>Estimated amount</h2><div className="cost-row"><span>{money(space.price)} per person × {draft.hours} hours × {draft.crew} {Number(draft.crew)===1?'person':'people'}</span><strong>{money(subtotal)}</strong></div>{fee>0n&&<div className="cost-row"><span>Owner-approved creator fee</span><strong>{money(fee)}</strong></div>}<div className="cost-total"><span>Estimated total</span><strong>{money(subtotal+fee)}</strong></div><div className="checkout-assurances"><div><Shield size={15}/>No payment at request stage</div><div><CheckCircle2 size={15}/>Request reviewed by the host</div><div><Clock3 size={15}/>Availability rechecked by server</div></div><p className="helper-text">The rate is per person per hour, so the base is rate × hours × crew. 15% commission is calculated on the booking base. The host share is 85%. This estimate is not a payment receipt.</p></aside></div>;
 }
 
 function BookingConfirmedPage() {
@@ -664,6 +667,7 @@ function HostDashboard() {
   const {data,loading,error,refresh}=useDashboard('host');
   const [actionError,setActionError]=useState('');
   const [busyId,setBusyId]=useState('');
+  const [changeFor,setChangeFor]=useState('');
   const respond=async(booking,accept)=>{
     setActionError('');setBusyId(booking.id);
     try{await apiFetch('/api/bookings/respond',{method:'POST',body:{bookingId:booking.id,accept,reason:accept?'Host accepted after review.':'Host declined this request.'}});refresh();}
@@ -681,9 +685,124 @@ function HostDashboard() {
     {actionError&&<p className="form-error" role="alert">{actionError}</p>}
     <div className="dashboard-grid two-columns"><section className="panel"><h2>Incoming requests</h2>{requests.length?requests.map((booking)=><BookingRow key={booking.id} booking={booking}><div className="booking-actions"><button className="button button-primary button-small" type="button" disabled={busyId===booking.id} onClick={()=>respond(booking,true)}>Accept</button><button className="button button-secondary button-small" type="button" disabled={busyId===booking.id} onClick={()=>respond(booking,false)}>Decline</button></div></BookingRow>):<p className="empty-inline">No pending host requests.</p>}</section>
     <section className="panel"><h2>Active booking operations</h2>{active.length?active.map((booking)=><BookingRow key={booking.id} booking={booking}><div className="booking-actions">{booking.payment_status==='paid'&&<Link className="button button-secondary button-small" to={`/otp-room?bookingId=${encodeURIComponent(booking.id)}`}>Check-in room</Link>}{booking.booking_status==='checked_in'&&<button className="button button-primary button-small" type="button" onClick={async()=>{setBusyId(booking.id);try{await apiFetch('/api/bookings/completion',{method:'POST',body:{action:'host_submit',bookingId:booking.id}});refresh();}catch(err){setActionError(err.message);}finally{setBusyId('');}}}>Submit completion</button>}{booking.payment_status==='paid'&&<Link className="text-link" to={`/dispute?bookingId=${encodeURIComponent(booking.id)}`}>Open dispute</Link>}</div></BookingRow>):<p className="empty-inline">No active booking records.</p>}</section>
-    <section className="panel"><h2>Your listings</h2>{data.listings?.length?data.listings.map((listing)=><div className="listing-row" key={listing.id}><span><strong>{listing.title}</strong><small>{[listing.neighbourhood,listing.city].filter(Boolean).join(', ')}</small></span><StatusBadge value={listing.status}/></div>):<><p className="empty-inline">No listing drafts or published locations.</p><Link className="button button-secondary" to="/host/onboarding">Submit a real location</Link></>}</section>
+    <section className="panel"><div className="panel-title-row"><h2>Your listings</h2><Link className="button button-primary button-small" to="/host/listings/new">+ Add another space</Link></div><p className="helper-text">New spaces go through admin review before they are published. Changing a live space needs a reason and admin approval first; the live listing stays as it is until then.</p>{data.listings?.length?data.listings.map((listing)=>{const requests=(data.listingChangeRequests||[]).filter((item)=>item.listing_id===listing.id);const pending=requests.find((item)=>item.status==='pending');const latest=requests[0];return <div key={listing.id}><div className="listing-row"><span><strong>{listing.title}</strong><small>{[listing.neighbourhood,listing.city].filter(Boolean).join(', ')}</small></span><span className="listing-row-actions"><StatusBadge value={listing.status}/>{pending&&<span className="badge badge-yellow">Change pending admin review</span>}{listing.status==='published'&&!pending&&<button type="button" className="button button-secondary button-small" onClick={()=>setChangeFor(changeFor===listing.id?'':listing.id)}>{changeFor===listing.id?'Close':'Request a change'}</button>}</span></div>{!pending&&latest?.status==='rejected'&&<p className="helper-text">Last change request was not approved{latest.review_reason?`: ${latest.review_reason}`:'.'}</p>}{!pending&&latest?.status==='approved'&&<p className="helper-text">Last change request was approved{latest.reviewed_at?` on ${dateTime(latest.reviewed_at)}`:''}.</p>}{changeFor===listing.id&&<ListingChangeForm listing={listing} onDone={()=>{setChangeFor('');refresh();}} onCancel={()=>setChangeFor('')}/>}</div>}):<><p className="empty-inline">No listing drafts or published locations.</p><Link className="button button-secondary" to="/host/onboarding">Submit a real location</Link></>}</section>
+    <HostWithdrawalsPanel data={data} refresh={refresh}/>
     <section className="panel dashboard-feature"><h2>About payout timing</h2><p>Completed sessions remain held. A scheduled job can mark a payout eligible only after the configured delay and dispute checks. This product does not send a transfer or promise escrow.</p><p>Paid out so far: <strong>{money(data.metrics.paidOutKobo)}</strong></p></section></div>
   </div>;
+}
+
+// Converts integer kobo to a plain naira figure for editing (for example 1500000 -> "15000").
+function koboToNairaInput(kobo) {
+  const value = BigInt(kobo || 0);
+  const whole = value / 100n;
+  const cents = value % 100n;
+  return cents ? `${whole}.${cents.toString().padStart(2, '0')}` : whole.toString();
+}
+
+const CHANGE_FIELD_LABELS = Object.freeze({
+  hourly_rate_kobo: 'Rate per person per hour',
+  min_hours: 'Minimum hours',
+  crew_capacity: 'Crew capacity',
+  description: 'Description',
+  public_location: 'Public area',
+  category: 'Category',
+  house_rules: 'House rules',
+});
+
+function changeValueText(field, value) {
+  if (value === null || value === undefined || value === '') return 'Not set';
+  if (field === 'hourly_rate_kobo') return `${money(value)} per person per hour`;
+  if (Array.isArray(value)) return value.length ? value.join(' · ') : 'None';
+  const text = String(value);
+  return text.length > 160 ? `${text.slice(0, 157)}…` : text;
+}
+
+// Shows each proposed field as "current → proposed". Used by the host's history and the admin queue.
+function ChangeDiff({listing, proposed}) {
+  return <div className="change-diff">{Object.entries(proposed||{}).map(([field,next])=><div className="change-diff-row" key={field}><strong>{CHANGE_FIELD_LABELS[field]||field}</strong><span>{listing?changeValueText(field,listing[field]):'Current value unavailable'}</span><span aria-hidden="true">→</span><span>{changeValueText(field,next)}</span></div>)}</div>;
+}
+
+// Host form: only fields that differ from the live listing are sent. Photos are not part of this form.
+function ListingChangeForm({listing, onDone, onCancel}) {
+  const [form,setForm]=useState({
+    rateNaira: koboToNairaInput(listing.hourly_rate_kobo),
+    minHours: String(listing.min_hours||1),
+    crew: String(listing.crew_capacity||1),
+    description: listing.description||'',
+    publicLocation: listing.public_location||'',
+    rules: (listing.house_rules||[]).join('\n'),
+    reason: '',
+  });
+  const [busy,setBusy]=useState(false);
+  const [error,setError]=useState('');
+  const set=(key)=>(event)=>setForm((current)=>({...current,[key]:event.target.value}));
+  const submit=async(event)=>{
+    event.preventDefault();
+    setError('');
+    const changes={};
+    let rateKobo;
+    try { rateKobo=Number(parseNairaToKobo(form.rateNaira)); } catch(err) { setError(err.message); return; }
+    if(rateKobo!==Number(listing.hourly_rate_kobo)) changes.hourly_rate_kobo=rateKobo;
+    if(Number(form.minHours)!==Number(listing.min_hours)) changes.min_hours=Number(form.minHours);
+    if(Number(form.crew)!==Number(listing.crew_capacity)) changes.crew_capacity=Number(form.crew);
+    if(form.description.trim()!==(listing.description||'').trim()) changes.description=form.description.trim();
+    if(form.publicLocation.trim()!==(listing.public_location||'').trim()) changes.public_location=form.publicLocation.trim();
+    const rules=form.rules.split('\n').map((item)=>item.trim()).filter(Boolean);
+    if(JSON.stringify(rules)!==JSON.stringify(listing.house_rules||[])) changes.house_rules=rules;
+    if(!Object.keys(changes).length){ setError('Change at least one field before sending a request.'); return; }
+    if(form.reason.trim().length<10){ setError('Explain why the change is needed (at least 10 characters).'); return; }
+    setBusy(true);
+    try {
+      await apiFetch('/api/host/listings/change-request',{method:'POST',body:{listingId:listing.id,changes,reason:form.reason.trim()}});
+      onDone();
+    } catch(err) { setError(err.message); }
+    finally { setBusy(false); }
+  };
+  const enteredKobo=(()=>{ try { return BigInt(parseNairaToKobo(form.rateNaira)); } catch { return null; } })();
+  const hours=Number(form.minHours), crew=Number(form.crew);
+  const exampleKobo=enteredKobo!==null&&hours>0&&crew>0?enteredKobo*BigInt(crew)*BigInt(hours):null;
+  return <form className="panel change-request-form" onSubmit={submit}>
+    <h3>Request a change to this space</h3>
+    <p className="helper-text">The live listing stays as it is until an admin approves your request. Photos cannot be changed here yet; contact the platform owner for photo changes.</p>
+    <label className="field"><span>Rate per person per hour (NGN)</span><input inputMode="decimal" value={form.rateNaira} onChange={set('rateNaira')}/></label>
+    <p className="helper-text">Every person in the crew pays this rate for each hour. {exampleKobo!==null?`Example with your numbers: ${money(enteredKobo)} × ${crew} people × ${hours} hour(s) = ${money(exampleKobo)} before commission.`:'Enter a valid rate, crew size and hours to see the total.'}</p>
+    <div className="form-grid">
+      <label className="field"><span>Minimum hours</span><input type="number" min="1" max="24" value={form.minHours} onChange={set('minHours')}/></label>
+      <label className="field"><span>Crew capacity (people)</span><input type="number" min="1" max="100" value={form.crew} onChange={set('crew')}/></label>
+    </div>
+    <label className="field"><span>Public area</span><input value={form.publicLocation} onChange={set('publicLocation')}/></label>
+    <label className="field"><span>Description</span><textarea rows="3" value={form.description} onChange={set('description')}/></label>
+    <label className="field"><span>House rules (one per line)</span><textarea rows="3" value={form.rules} onChange={set('rules')}/></label>
+    <label className="field"><span>Reason for the change (required)</span><textarea rows="3" required minLength={10} maxLength={2000} value={form.reason} onChange={set('reason')} placeholder="For example: our new equipment needs a larger crew allowance."/></label>
+    {error&&<p className="form-error" role="alert">{error}</p>}
+    <div className="booking-actions"><button className="button button-primary" type="submit" disabled={busy}>{busy?'Sending…':'Send for approval'}</button><button className="button button-secondary" type="button" onClick={onCancel}>Cancel</button></div>
+  </form>;
+}
+
+// Host payouts: record-and-track only. Nothing here moves money; the owner pays manually and marks it paid.
+function HostWithdrawalsPanel({data, refresh}) {
+  const [busy,setBusy]=useState(false);
+  const [message,setMessage]=useState('');
+  const metrics=data.metrics||{};
+  const available=BigInt(metrics.payoutAvailableKobo||0);
+  const request=async()=>{
+    if(available<=0n) return;
+    if(!window.confirm(`Record a withdrawal request for ${money(metrics.payoutAvailableKobo)}? This only records your request. The platform owner pays it to your bank manually and then marks it paid here.`)) return;
+    setBusy(true); setMessage('');
+    try { const result=await apiFetch('/api/payments/withdrawal',{method:'POST',body:{note:''}}); setMessage(result.message||'Withdrawal request recorded.'); refresh(); }
+    catch(err) { setMessage(err.message); }
+    finally { setBusy(false); }
+  };
+  const history=data.withdrawals||[];
+  return <section className="panel dashboard-feature payout-panel"><h2>Payouts &amp; withdrawals</h2>
+    <p className="helper-text">Money is held for a set period after a session, then becomes available. Requesting a withdrawal records your request only. The platform owner then pays it manually from its bank or payment dashboard and marks it paid here. This product does not send a transfer or promise escrow.</p>
+    <div className="stats-grid payout-stats"><StatCard icon={Wallet} label="Held" value={money(metrics.payoutHeldKobo)}/><StatCard icon={CheckCircle2} label="Available to request" value={money(metrics.payoutAvailableKobo)}/><StatCard icon={Clock3} label="Requested, awaiting payment" value={money(metrics.payoutRequestedKobo)}/><StatCard icon={Banknote} label="Paid out" value={money(metrics.payoutPaidKobo)}/></div>
+    <div className="booking-actions"><button className="button button-primary" type="button" disabled={busy||available<=0n} onClick={request}>{busy?'Recording…':'Request withdrawal'}</button></div>
+    {available<=0n&&<p className="helper-text">Nothing is available to request yet. Money becomes available only after the hold period and the completed-session checks.</p>}
+    {message&&<p className="inline-admin-message" role="status">{message}</p>}
+    <h3>Request history</h3>
+    {history.length?history.map((item)=><div className="listing-row" key={item.id}><span><strong>{money(item.amount_kobo)}</strong><small>Requested {dateTime(item.requested_at)}{item.paid_at?` · paid ${dateTime(item.paid_at)}`:''}{item.payment_reference?` · reference ${item.payment_reference}`:''}{item.status==='rejected'&&item.review_reason?` · ${item.review_reason}`:''}</small></span><StatusBadge value={item.status}/></div>):<p className="empty-inline">No withdrawal requests yet.</p>}
+  </section>;
 }
 
 function AdminDashboard() {
@@ -717,12 +836,51 @@ function AdminDashboard() {
     try{const result=await apiFetch('/api/admin/disputes/resolve',{method:'POST',body:{disputeId:dispute.id,decision,reason,refundAmountKobo}});setMessage(result.payment_action==='refund_pending_provider_confirmation'?'Decision recorded. Provider refund is still pending; no transfer is claimed.':'Dispute decision recorded; payout remains held.');refresh();}
     catch(err){setMessage(err.message);}finally{setWorkingId('');}
   };
+  const reviewChange=async(item,decision)=>{
+    const reason=window.prompt(`Audit reason for ${decision} (${item.listing?.title||'listing'}):`);
+    if(!reason||reason.trim().length<5)return;
+    setWorkingId(item.id);setMessage('');
+    try{
+      await apiFetch('/api/admin/listings/change-review',{method:'POST',body:{changeRequestId:item.id,decision,reason}});
+      setMessage(decision==='approve'?'Change approved and now live. Existing bookings keep their original prices.':'Change rejected. The live listing is unchanged.');refresh();
+    }catch(err){setMessage(err.message);}finally{setWorkingId('');}
+  };
+  const reviewWithdrawal=async(item,decision)=>{
+    const reason=window.prompt(`Audit reason for ${decision.replaceAll('_',' ')} (${money(item.amount_kobo)}):`);
+    if(!reason||reason.trim().length<5)return;
+    let paymentReference='';
+    if(decision==='mark_paid'){
+      paymentReference=(window.prompt('Payment reference from your bank or Paystack dashboard. Only enter this after you have sent the money yourself:')||'').trim();
+      if(paymentReference.length<3)return;
+      if(!window.confirm(`Mark ${money(item.amount_kobo)} as paid with reference ${paymentReference}? This records a payment you made outside the app. The app sends no money.`))return;
+    }
+    setWorkingId(item.id);setMessage('');
+    try{
+      const result=await apiFetch('/api/admin/withdrawals/review',{method:'POST',body:{requestId:item.id,decision,reason,paymentReference}});
+      setMessage(result.status==='paid'?'Marked paid. This records a payment you made outside the app; no money was sent by the app.':`Withdrawal ${result.status}. No money was sent by the app.`);refresh();
+    }catch(err){setMessage(err.message);}finally{setWorkingId('');}
+  };
+  const recordCompanyWithdrawal=async()=>{
+    if(BigInt(metrics.commissionAvailableKobo||0)<=0n)return;
+    if(!window.confirm(`Record a company withdrawal of ${money(metrics.commissionAvailableKobo)}? This only records the request. You pay it yourself, then mark it paid in the withdrawal queue.`))return;
+    setMessage('');
+    try{const result=await apiFetch('/api/payments/withdrawal',{method:'POST',body:{scope:'platform',note:'Company commission withdrawal'}});setMessage(result.message||'Company withdrawal recorded.');refresh();}
+    catch(err){setMessage(err.message);}
+  };
+  const withdrawalItems=(queues.withdrawals||[]).filter((item)=>['pending','approved','paid'].includes(item.status)).slice(0,40);
   return <div className="dashboard-page wrap"><DashboardHeader title="Admin operations" subtitle="Live database queues; all review and dispute actions are audited."/>
     <div className="stats-grid"><StatCard icon={FileImage} label="Listing review queue" value={metrics.listingReviewQueue}/><StatCard icon={BadgeCheck} label="Host review queue" value={metrics.hostReviewQueue}/><StatCard icon={CalendarDays} label="Booking records" value={metrics.bookings}/><StatCard icon={Banknote} label="Captured payments" value={money(metrics.capturedPaymentsKobo)}/><StatCard icon={MessageSquare} label="Open disputes" value={metrics.openDisputes}/><StatCard icon={Wallet} label="Held payouts" value={metrics.payoutHeld}/><StatCard icon={Shield} label="Late payments to review" value={metrics.latePaidBookings}/><StatCard icon={Mail} label="New contact messages" value={metrics.contactQueue}/></div>
+    <section className="panel dashboard-feature company-commission-panel"><h2>Company commission (platform share)</h2>
+      <p className="helper-text">This is the platform's share, kept separate from host money. Commission becomes available on the same schedule as host payouts, and refunded bookings never count. Recording a company withdrawal does not send money; you pay it yourself and then mark it paid.</p>
+      <div className="stats-grid"><StatCard icon={Banknote} label="Commission earned" value={money(metrics.commissionEarnedKobo)}/><StatCard icon={CheckCircle2} label="Available to withdraw" value={money(metrics.commissionAvailableKobo)}/><StatCard icon={Clock3} label="Requested, awaiting payment" value={money(metrics.commissionRequestedKobo)}/><StatCard icon={Wallet} label="Withdrawn (marked paid)" value={money(metrics.commissionWithdrawnKobo)}/></div>
+      <div className="booking-actions"><button className="button button-primary" type="button" disabled={BigInt(metrics.commissionAvailableKobo||0)<=0n} onClick={recordCompanyWithdrawal}>Record company withdrawal</button></div>
+    </section>
     {message&&<p className="inline-admin-message" role="status">{message}</p>}
     <div className="admin-queues">
       <QueuePanel title="Listings pending review" empty="No submitted listings.">{(queues.listings||[]).map((item)=><div className="admin-queue-item" key={item.id}><strong>{item.title}</strong><small>{[item.neighbourhood,item.city].filter(Boolean).join(', ')} · host {item.owner_id.slice(0,8)}</small><div className="booking-actions"><button className="button button-primary button-small" disabled={workingId===item.id} onClick={()=>review('listing',item,'approve')}>Approve</button><button className="button button-secondary button-small" disabled={workingId===item.id} onClick={()=>review('listing',item,'request_changes')}>Request changes</button><button className="button button-secondary button-small" disabled={workingId===item.id} onClick={()=>review('listing',item,'reject')}>Reject</button></div></div>)}</QueuePanel>
       <QueuePanel title="Hosts pending review" empty="No host applications.">{(queues.hosts||[]).map((item)=><div className="admin-queue-item" key={item.user_id}><strong>{item.public_display_name||'Host profile'}</strong><small>Host id {item.user_id.slice(0,8)} · {displayStatus(item.verification_status)}</small><div className="booking-actions"><button className="button button-primary button-small" disabled={workingId===item.user_id} onClick={()=>review('host',item,'approve')}>Approve</button><button className="button button-secondary button-small" disabled={workingId===item.user_id} onClick={()=>review('host',item,'request_changes')}>Request changes</button><button className="button button-secondary button-small" disabled={workingId===item.user_id} onClick={()=>review('host',item,'reject')}>Reject</button></div></div>)}</QueuePanel>
+      <QueuePanel title="Listing change requests" empty="No pending change requests to a live listing.">{(queues.listingChanges||[]).map((item)=><div className="admin-queue-item" key={item.id}><strong>{item.listing?.title||'Listing'}</strong><small>Requested {dateTime(item.created_at)} · host {item.requested_by.slice(0,8)}</small><p>{item.reason}</p><ChangeDiff listing={item.listing} proposed={item.proposed_changes}/><div className="booking-actions"><button className="button button-primary button-small" disabled={workingId===item.id} onClick={()=>reviewChange(item,'approve')}>Approve change</button><button className="button button-secondary button-small" disabled={workingId===item.id} onClick={()=>reviewChange(item,'reject')}>Reject</button></div></div>)}</QueuePanel>
+      <QueuePanel title="Withdrawal requests" empty="No withdrawal requests to review.">{withdrawalItems.map((item)=><div className="admin-queue-item" key={item.id}><strong>{money(item.amount_kobo)} · {item.requester_role==='platform'?'Company commission':'Host payout'}</strong><small>Requested {dateTime(item.requested_at)} · requester {item.requester_id.slice(0,8)}{item.payment_reference?` · reference ${item.payment_reference}`:''}</small>{item.note&&<p>{item.note}</p>}<StatusBadge value={item.status}/><div className="booking-actions">{item.status==='pending'&&<button className="button button-primary button-small" disabled={workingId===item.id} onClick={()=>reviewWithdrawal(item,'approve')}>Approve</button>}{item.status==='approved'&&<button className="button button-primary button-small" disabled={workingId===item.id} onClick={()=>reviewWithdrawal(item,'mark_paid')}>Mark paid (I paid it)</button>}{['pending','approved'].includes(item.status)&&<button className="button button-secondary button-small" disabled={workingId===item.id} onClick={()=>reviewWithdrawal(item,'reject')}>Reject and release</button>}</div></div>)}</QueuePanel>
       <QueuePanel title="Dispute queue" empty="No disputes are recorded.">{(queues.disputes||[]).filter((item)=>!['resolved','closed'].includes(item.status)).map((item)=><div className="admin-queue-item" key={item.id}><strong>{displayStatus(item.dispute_type)} · {displayStatus(item.status)}</strong><small>{item.description}</small><div className="booking-actions"><button className="button button-secondary button-small" onClick={()=>resolve(item,'request_more_evidence')}>Request evidence</button><button className="button button-primary button-small" onClick={()=>resolve(item,'release_payout')}>Resolve: no refund</button><button className="button button-secondary button-small" onClick={()=>resolve(item,'refund_full')}>Record full refund</button><button className="button button-secondary button-small" onClick={()=>resolve(item,'refund_partial')}>Record partial refund</button></div><p className="helper-text">Refund and payout provider actions are not automated here.</p></div>)}</QueuePanel>
       <QueuePanel title="Recent provider payments" empty="No payment attempts recorded.">{(queues.payments||[]).slice(0,12).map((item)=><div className="listing-row" key={item.id}><span><strong>{money(item.amount_kobo)}</strong><small>{item.provider_reference} · booking {item.booking_id.slice(0,8)}</small></span><StatusBadge value={item.status}/></div>)}</QueuePanel>
       <QueuePanel title="Contact requests" empty="No contact submissions.">{(queues.contacts||[]).slice(0,15).map((item)=><div className="admin-queue-item" key={item.id}><strong>{item.subject}</strong><small>{item.full_name} · {item.email} · {dateTime(item.created_at)}</small><p>{item.message}</p><StatusBadge value={item.status}/></div>)}</QueuePanel>
@@ -733,10 +891,17 @@ function AdminDashboard() {
 function QueuePanel({title,empty,children}) { const hasItems=Array.isArray(children)?children.length>0:Boolean(children);return <section className="panel queue-panel"><h2>{title}</h2>{hasItems?children:<p className="empty-inline">{empty}</p>}</section>; }
 
 const onboardingSteps=['Host profile','Space details','Location & rules','Availability','Photos & submit'];
-function HostOnboarding() {
+// Host statuses that the create_listing_draft database function accepts.
+const ADDABLE_HOST_STATUSES=['pending','approved','needs_changes'];
+// mode='onboarding' (default): first-time host application, starts at the host-profile step.
+// mode='new-listing': an existing host adds another space. Skips the host-profile step and never calls /api/host/onboarding.
+function HostOnboarding({mode='onboarding'}) {
   const navigate=useNavigate();
   const toast=useToast();
-  const [step,setStep]=useState(0);
+  const isNewListing=mode==='new-listing';
+  const firstStep=isNewListing?1:0;
+  const [step,setStep]=useState(firstStep);
+  const [hostGate,setHostGate]=useState({loading:isNewListing,host:null,error:''});
   const [form,setForm]=useState({displayName:'',bio:'',title:'',category:'Creative Studio',description:'',city:'',neighbourhood:'',publicLocation:'',exactAddress:'',hourlyRateNaira:'',minHours:'2',capacity:'12',rules:'',termsAccepted:false});
   const [amenityCatalog,setAmenityCatalog]=useState([]);
   const [selectedAmenities,setSelectedAmenities]=useState([]);
@@ -748,6 +913,12 @@ function HostOnboarding() {
   const [listingId,setListingId]=useState('');
   const [settings,setSettings]=useState(null);
   useEffect(()=>{apiFetch('/api/amenities').then((result)=>setAmenityCatalog(result.amenities||[])).catch(()=>setAmenityCatalog([]));apiFetch('/api/settings').then(setSettings).catch(()=>setSettings(null));},[]);
+  useEffect(()=>{
+    if(!isNewListing)return undefined;
+    let active=true;
+    apiFetch('/api/dashboard?role=host').then((data)=>{if(active)setHostGate({loading:false,host:data.host||null,error:''});}).catch((err)=>{if(active)setHostGate({loading:false,host:null,error:err.message});});
+    return()=>{active=false;};
+  },[isNewListing]);
   const update=(key,value)=>setForm((current)=>({...current,[key]:value}));
   const toggleAmenity=(id)=>setSelectedAmenities((current)=>current.includes(id)?current.filter((value)=>value!==id):[...current,id]);
   const selectPhotos=(files)=>{
@@ -760,7 +931,9 @@ function HostOnboarding() {
     setError('');setBusy(true);
     try{
       if(!supabase)throw new Error('Database storage is not configured. No listing draft was created.');
-      const onboarding=await apiFetch('/api/host/onboarding',{method:'POST',body:{displayName:form.displayName,bio:form.bio,termsAccepted:form.termsAccepted}});
+      // Existing hosts must not re-run request_host_role, so the onboarding call happens only in the first-time flow.
+      let hostStatus=hostGate.host?.verification_status||'';
+      if(!isNewListing){const onboarding=await apiFetch('/api/host/onboarding',{method:'POST',body:{displayName:form.displayName,bio:form.bio,termsAccepted:form.termsAccepted}});hostStatus=onboarding.verification_status;}
       let createdId=listingId;
       if(!createdId){
         const draft=await apiFetch('/api/host/listings',{method:'POST',body:{
@@ -782,7 +955,7 @@ function HostOnboarding() {
         await apiFetch('/api/host/listings/photo',{method:'POST',body:{listingId:createdId,storagePath:path,altText:`${form.title} location photo ${index+1}`,isCover:index===0}});
       }
       const result=await apiFetch('/api/host/listings/submit',{method:'POST',body:{listingId:createdId}});
-      setSubmitted({listingId:createdId,status:result.status,hostStatus:onboarding.verification_status});
+      setSubmitted({listingId:createdId,status:result.status,hostStatus});
     }catch(err){setError(err.message||'Host application could not be saved.');}
     finally{setBusy(false);}
   };
@@ -795,18 +968,22 @@ function HostOnboarding() {
     if(step<onboardingSteps.length-1)setStep((value)=>value+1);else submit();
   };
   const schedule=availability.map((item)=>({...item,label:['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][item.weekday]}));
-  if(submitted)return <div className="page-wrap wrap onboarding-page"><DashboardHeader title="Host application submitted" subtitle="The records are saved but are not published or bookable."/><div className="panel publish-complete"><div className="confirmed-icon"><CheckCircle2 size={30}/></div><h2>{form.title} · pending review</h2><p>Listing status: <strong>{displayStatus(submitted.status)}</strong>. Host status: <strong>{displayStatus(submitted.hostStatus)}</strong>. An administrator must review the host, listing and photos before public discovery.</p><div className="button-row"><Link to="/host-dashboard" className="button button-primary">Open host dashboard</Link><Link to="/explore" className="button button-secondary">Browse published spaces</Link></div></div></div>;
-  return <div className="page-wrap wrap onboarding-page"><DashboardHeader title="Host onboarding" subtitle="Submit your real location for review. Saving this form does not publish it."/>
-    <div className="onboarding-steps">{onboardingSteps.map((item,index)=><button key={item} type="button" className={`${index===step?'active':''}${index<step?' complete':''}`} onClick={()=>index<=step&&setStep(index)}><span>{index+1}.</span> {item}</button>)}</div>
-    <section className="panel onboarding-panel"><div className="onboarding-step-title"><span>STEP {String(step+1).padStart(2,'0')} / 05</span><h2>{onboardingSteps[step]}</h2></div><div className="onboarding-form">
+  if(isNewListing&&hostGate.loading)return <div className="page-wrap wrap onboarding-page"><LoadingPanel text="Checking your host profile…"/></div>;
+  if(isNewListing&&(hostGate.error||!hostGate.host))return <div className="page-wrap wrap onboarding-page"><DashboardHeader title="Add another space" subtitle="Adding a space needs an existing host profile."/><EmptyPanel title="No host profile found" text={hostGate.error||'Apply to become a host first. Once your host profile exists you can add spaces from your dashboard.'} action={<Link className="button button-primary" to="/host/onboarding">Start host application</Link>}/></div>;
+  if(isNewListing&&!ADDABLE_HOST_STATUSES.includes(hostGate.host.verification_status))return <div className="page-wrap wrap onboarding-page"><DashboardHeader title="Add another space" subtitle="Your host account cannot add spaces right now."/><EmptyPanel title="Host account not active" text={`Your host status is ${displayStatus(hostGate.host.verification_status)}. Contact the platform owner if you think this is wrong.`} action={<Link className="button button-secondary" to="/host-dashboard">Back to host dashboard</Link>}/></div>;
+  if(submitted)return <div className="page-wrap wrap onboarding-page"><DashboardHeader title={isNewListing?'Space submitted':'Host application submitted'} subtitle="The records are saved but are not published or bookable."/><div className="panel publish-complete"><div className="confirmed-icon"><CheckCircle2 size={30}/></div><h2>{form.title} · pending review</h2><p>Listing status: <strong>{displayStatus(submitted.status)}</strong>. Host status: <strong>{displayStatus(submitted.hostStatus)}</strong>. An administrator must review {isNewListing?'this new space':'the host, listing and photos'} before public discovery.</p><div className="button-row"><Link to="/host-dashboard" className="button button-primary">Back to host dashboard</Link><Link to="/explore" className="button button-secondary">Browse published spaces</Link></div></div></div>;
+  const visibleSteps=onboardingSteps.length-firstStep;
+  return <div className="page-wrap wrap onboarding-page"><DashboardHeader title={isNewListing?'Add another space':'Host onboarding'} subtitle={isNewListing?'Submit a real additional location for review. Saving this form does not publish it.':'Submit your real location for review. Saving this form does not publish it.'}/>
+    <div className="onboarding-steps">{onboardingSteps.map((item,index)=>index<firstStep?null:<button key={item} type="button" className={`${index===step?'active':''}${index<step?' complete':''}`} onClick={()=>index<=step&&setStep(index)}><span>{index+1-firstStep}.</span> {item}</button>)}</div>
+    <section className="panel onboarding-panel"><div className="onboarding-step-title"><span>STEP {String(step+1-firstStep).padStart(2,'0')} / {String(visibleSteps).padStart(2,'0')}</span><h2>{onboardingSteps[step]}</h2></div><div className="onboarding-form">
       {step===0&&<><div className="form-grid"><label className="form-field"><span>Public host name</span><input required maxLength={120} value={form.displayName} onChange={(event)=>update('displayName',event.target.value)} placeholder="Name shown to booking participants"/></label><label className="form-field"><span>Short host bio</span><input maxLength={3000} value={form.bio} onChange={(event)=>update('bio',event.target.value)} placeholder="Tell creators about your experience"/></label></div><label className="remember-check terms-check"><input type="checkbox" checked={form.termsAccepted} onChange={(event)=>update('termsAccepted',event.target.checked)}/> I am submitting a host application and understand it is subject to review; host terms remain a draft until owner/legal approval. <Link to="/terms">View draft</Link></label></>}
-      {step===1&&<><div className="form-grid"><label className="form-field"><span>Space name</span><input required minLength={4} maxLength={120} value={form.title} onChange={(event)=>update('title',event.target.value)} placeholder="A name for your real location"/></label><label className="form-field"><span>Category</span><select value={form.category} onChange={(event)=>update('category',event.target.value)}>{categories.map((item)=><option key={item}>{item}</option>)}</select></label><label className="form-field"><span>Hourly rate (NGN)</span><input required type="number" min="1" step="500" value={form.hourlyRateNaira} onChange={(event)=>update('hourlyRateNaira',event.target.value)} placeholder="Set your real rate"/></label><label className="form-field"><span>Minimum booking hours</span><select value={form.minHours} onChange={(event)=>update('minHours',event.target.value)}>{Array.from({length:24},(_,index)=>index+1).map((value)=><option key={value}>{value}</option>)}</select></label><label className="form-field"><span>Maximum crew capacity</span><input required type="number" min="1" max="500" value={form.capacity} onChange={(event)=>update('capacity',event.target.value)}/></label></div><label className="form-field"><span>Listing description</span><textarea rows="4" maxLength={5000} value={form.description} onChange={(event)=>update('description',event.target.value)} placeholder="Describe the actual space, its permitted production uses and limitations."/></label></>}
+      {step===1&&<><div className="form-grid"><label className="form-field"><span>Space name</span><input required minLength={4} maxLength={120} value={form.title} onChange={(event)=>update('title',event.target.value)} placeholder="A name for your real location"/></label><label className="form-field"><span>Category</span><select value={form.category} onChange={(event)=>update('category',event.target.value)}>{categories.map((item)=><option key={item}>{item}</option>)}</select></label><label className="form-field"><span>Hourly rate per person (NGN)</span><input required type="number" min="1" step="500" value={form.hourlyRateNaira} onChange={(event)=>update('hourlyRateNaira',event.target.value)} placeholder="Set your real rate"/></label><label className="form-field"><span>Minimum booking hours</span><select value={form.minHours} onChange={(event)=>update('minHours',event.target.value)}>{Array.from({length:24},(_,index)=>index+1).map((value)=><option key={value}>{value}</option>)}</select></label><label className="form-field"><span>Maximum crew capacity</span><input required type="number" min="1" max="500" value={form.capacity} onChange={(event)=>update('capacity',event.target.value)}/></label></div><label className="form-field"><span>Listing description</span><textarea rows="4" maxLength={5000} value={form.description} onChange={(event)=>update('description',event.target.value)} placeholder="Describe the actual space, its permitted production uses and limitations."/></label></>}
       {step===2&&<><div className="form-grid"><label className="form-field"><span>City</span><input required maxLength={100} value={form.city} onChange={(event)=>update('city',event.target.value)} placeholder="City"/></label><label className="form-field"><span>Neighbourhood</span><input required maxLength={120} value={form.neighbourhood} onChange={(event)=>update('neighbourhood',event.target.value)} placeholder="Neighbourhood"/></label><label className="form-field"><span>Public area description</span><input maxLength={250} value={form.publicLocation} onChange={(event)=>update('publicLocation',event.target.value)} placeholder="General area only; no door or unit number"/></label></div><label className="form-field"><span>Exact address · private</span><textarea required rows="2" maxLength={500} value={form.exactAddress} onChange={(event)=>update('exactAddress',event.target.value)} placeholder="Exact address stored privately; it is not returned by public discovery."/></label><label className="form-field"><span>House rules · one per line</span><textarea rows="3" maxLength={3000} value={form.rules} onChange={(event)=>update('rules',event.target.value)} placeholder="Only enter real, applicable rules."/></label><div className="onboarding-amenities">{amenityCatalog.map((item)=><label className={`amenity-choice${selectedAmenities.includes(item.id)?' selected':''}`} key={item.id}><input type="checkbox" checked={selectedAmenities.includes(item.id)} onChange={()=>toggleAmenity(item.id)}/><CheckCircle2 size={15}/>{item.name}</label>)}</div>{!amenityCatalog.length&&<p className="helper-text">Connect the database to load the owner-managed amenity catalogue.</p>}<p className="helper-text">Exact addresses and host contact details are not shown in public discovery. They are available only to booking participants after verified payment.</p></>}
       {step===3&&<><p className="helper-text">Set recurring weekly hours in Africa/Lagos time. The server will reject requests outside these hours or overlapping confirmed/pending records.</p><div className="availability-editor">{schedule.map((item)=>{const current=availability[item.weekday];return <div className="availability-day" key={item.weekday}><label className="remember-check"><input type="checkbox" checked={current.enabled} onChange={(event)=>setAvailability((rows)=>rows.map((row)=>row.weekday===item.weekday?{...row,enabled:event.target.checked}:row))}/>{item.label}</label><input type="time" disabled={!current.enabled} value={current.opens_at} onChange={(event)=>setAvailability((rows)=>rows.map((row)=>row.weekday===item.weekday?{...row,opens_at:event.target.value}:row))}/><span>to</span><input type="time" disabled={!current.enabled} value={current.closes_at} onChange={(event)=>setAvailability((rows)=>rows.map((row)=>row.weekday===item.weekday?{...row,closes_at:event.target.value}:row))}/></div>;})}</div></>}
       {step===4&&<><label className="upload-drop"><Upload size={22}/><strong>Upload real listing photos</strong><span>JPG, PNG or WebP · up to 10 MB each · private until review</span><input type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event)=>selectPhotos(event.target.files)}/></label>{photos.length>0&&<div className="uploaded-list">{photos.map((file)=><span key={`${file.name}-${file.lastModified}`}><FileImage size={14}/>{file.name}</span>)}</div>}<div className="review-summary"><h3>Review before submission</h3><p><CheckCircle2 size={14}/>{form.title||'Space name pending'}</p><p><CheckCircle2 size={14}/>{[form.neighbourhood,form.city].filter(Boolean).join(', ')||'Location pending'}</p><p><CheckCircle2 size={14}/>{photos.length} real photo{photos.length===1?'':'s'} selected</p><p><CheckCircle2 size={14}/>{availability.filter((item)=>item.enabled).length} weekly availability window{availability.filter((item)=>item.enabled).length===1?'':'s'}</p></div><p className="draft-policy-notice">Your host application starts as pending. Photos remain private until approval. Do not upload third-party or unlicensed images.</p></>}
     </div>
     {error&&<p className="form-error" role="alert">{error}</p>}
-    <div className="onboarding-actions">{step>0&&<button className="button button-secondary" type="button" onClick={()=>setStep((value)=>value-1)}><ChevronLeft size={15}/> Back</button>}<button className="button button-primary" type="button" disabled={busy||(step===4&&!photos.length)} onClick={next}>{busy?'Saving real records…':step===4?'Submit for review':'Continue'} <ArrowRight size={15}/></button></div>
+    <div className="onboarding-actions">{step>firstStep&&<button className="button button-secondary" type="button" onClick={()=>setStep((value)=>value-1)}><ChevronLeft size={15}/> Back</button>}<button className="button button-primary" type="button" disabled={busy||(step===4&&!photos.length)} onClick={next}>{busy?'Saving real records…':step===4?'Submit for review':'Continue'} <ArrowRight size={15}/></button></div>
     {settings&&!settings.bookingEnabled&&<p className="helper-text">Booking and payment remain disabled until the owner configures policy and provider settings.</p>}
     </section>
   </div>;

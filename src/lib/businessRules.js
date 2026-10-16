@@ -19,6 +19,26 @@ export function calculateHostShareKobo(baseAmountKobo) {
   return base - calculateCommissionKobo(base);
 }
 
+// Booking base = hourly rate (per person, per hour) x hours x crew size.
+// Owner decision 2026-10-16: every person pays the hourly rate. This is a client-side estimate only;
+// the database function request_booking_request is authoritative.
+function positiveInteger(value, label) {
+  if (typeof value === 'bigint') {
+    if (value < 1n) throw new RangeError(`${label} must be at least 1.`);
+    return value;
+  }
+  if (typeof value !== 'number' || !Number.isSafeInteger(value)) throw new TypeError(`${label} must be a whole number.`);
+  if (value < 1) throw new RangeError(`${label} must be at least 1.`);
+  return BigInt(value);
+}
+
+export function calculateBookingBaseKobo({ hourlyRateKobo, hours, crewSize }) {
+  const rate = positiveInteger(hourlyRateKobo, 'Hourly rate');
+  const hourCount = positiveInteger(hours, 'Hours');
+  const crew = positiveInteger(crewSize, 'Crew size');
+  return rate * hourCount * crew;
+}
+
 export function calculateCheckoutKobo(baseAmountKobo, approvedCreatorFeeKobo = 0) {
   const base = asKobo(baseAmountKobo, 'Booking base');
   const fee = asKobo(approvedCreatorFeeKobo, 'Creator fee');

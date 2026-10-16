@@ -1,11 +1,12 @@
 // Payments area. Public URLs (unchanged):
 //   POST /api/payments/initialize -> payments-initialize
 //   GET  /api/payments/status     -> payments-status
+//   POST /api/payments/withdrawal -> payments-withdrawal-request (records a withdrawal request only; no money moves)
 //
 // Vendor webhooks stay on their own function so the raw body signature check
 // keeps running with the body parser disabled: /api/webhooks/paystack.
 import { randomUUID } from 'node:crypto';
-import { getServiceClient, requireUser } from '../supabase.js';
+import { getServiceClient, requireRole, requireUser } from '../supabase.js';
 import { methodNotAllowed, readBody, sendError } from '../http.js';
 
 export async function initializePayment(req, res) {
@@ -73,6 +74,29 @@ export async function paymentStatus(req, res) {
   } catch (error) { return sendError(res, error, 'Payment status could not be checked.'); }
 }
 
+// Records a withdrawal REQUEST. It never calls a transfer/payout API. The body may send scope:'platform' to ask
+// for a company (commission) withdrawal; the database re-checks the caller is an admin. Otherwise the caller's
+// host role is required. Money is paid manually by the owner and marked paid in the admin panel.
+export async function requestWithdrawal(req, res) {
+  if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
+  try {
+    const { userClient, user } = await requireUser(req);
+    const body = await readBody(req);
+    const note = String(body.note || '').trim().slice(0, 600);
+    if (body.scope === 'platform') {
+      await requireRole(userClient, user.id, 'admin');
+      const { data, error } = await userClient.rpc('request_platform_withdrawal', { p_note: note });
+      if (error) throw error;
+      return res.status(201).json({ ...data, message: 'Company withdrawal recorded. Pay it manually, then mark it paid in the admin panel.' });
+    }
+    await requireRole(userClient, user.id, 'host');
+    const { data, error } = await userClient.rpc('request_host_withdrawal', { p_note: note });
+    if (error) throw error;
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(201).json({ ...data, message: 'Withdrawal request recorded. The platform owner will pay it manually and mark it paid here.' });
+  } catch (error) { return sendError(res, error, 'Withdrawal request could not be recorded.'); }
+}
+
 function isUuid(value) { return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || '')); }
 
 export const paymentRoutes = {
@@ -80,5 +104,6 @@ export const paymentRoutes = {
   routes: {
     'payments-initialize': initializePayment,
     'payments-status': paymentStatus,
+    'payments-withdrawal-request': requestWithdrawal,
   },
 };

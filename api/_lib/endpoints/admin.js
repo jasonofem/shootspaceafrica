@@ -2,6 +2,8 @@
 //   POST /api/admin/listings/review  -> admin-listings-review
 //   POST /api/admin/hosts/review     -> admin-hosts-review
 //   POST /api/admin/disputes/resolve -> admin-disputes-resolve
+//   POST /api/admin/listings/change-review -> admin-listing-change-review
+//   POST /api/admin/withdrawals/review -> admin-withdrawal-review (records decisions only; sends no money)
 import { requireRole, requireUser } from '../supabase.js';
 import { methodNotAllowed, readBody, sendError } from '../http.js';
 
@@ -57,6 +59,46 @@ export async function resolveDispute(req, res) {
   } catch (error) { return sendError(res, error, 'Dispute action could not be recorded.'); }
 }
 
+export async function reviewListingChange(req, res) {
+  if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
+  try {
+    const { userClient, user } = await requireUser(req);
+    await requireRole(userClient, user.id, 'admin');
+    const body = await readBody(req);
+    if (!isUuid(body.changeRequestId) || !['approve', 'reject'].includes(String(body.decision))) return res.status(400).json({ error: 'Change request and decision are required.' });
+    const reason = String(body.reason || '').trim();
+    if (reason.length < 5 || reason.length > 2000) return res.status(400).json({ error: 'An audit reason between 5 and 2,000 characters is required.' });
+    const { data, error } = await userClient.rpc('admin_review_listing_change', { p_request_id: body.changeRequestId, p_decision: body.decision, p_reason: reason });
+    if (error) throw error;
+    return res.status(200).json(data);
+  } catch (error) { return sendError(res, error, 'Listing change review could not be completed.'); }
+}
+
+// Records an admin decision on a withdrawal request. approve -> approved; mark_paid -> paid (the owner has
+// already paid manually and enters the reference); reject -> releases the claimed funds.
+export async function reviewWithdrawal(req, res) {
+  if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
+  try {
+    const { userClient, user } = await requireUser(req);
+    await requireRole(userClient, user.id, 'admin');
+    const body = await readBody(req);
+    if (!isUuid(body.requestId) || !withdrawalDecisions.has(String(body.decision))) return res.status(400).json({ error: 'Withdrawal request and decision are required.' });
+    const reason = String(body.reason || '').trim();
+    if (reason.length < 5 || reason.length > 2000) return res.status(400).json({ error: 'An audit reason between 5 and 2,000 characters is required.' });
+    const paymentReference = String(body.paymentReference || '').trim();
+    if (body.decision === 'mark_paid' && !/^[A-Za-z0-9 ._\/#:-]{3,100}$/.test(paymentReference)) {
+      return res.status(400).json({ error: 'Enter the payment reference you used to pay (3–100 letters, numbers or . _ - / # : characters).' });
+    }
+    const { data, error } = await userClient.rpc('admin_review_withdrawal', {
+      p_request_id: body.requestId, p_decision: body.decision, p_reason: reason, p_payment_reference: body.decision === 'mark_paid' ? paymentReference : null,
+    });
+    if (error) throw error;
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(200).json(data);
+  } catch (error) { return sendError(res, error, 'Withdrawal review could not be completed.'); }
+}
+
+const withdrawalDecisions = new Set(['approve', 'mark_paid', 'reject']);
 const listingDecisions = new Set(['approve', 'request_changes', 'reject', 'pause']);
 const hostDecisions = new Set(['approve', 'request_changes', 'reject', 'suspend']);
 const disputeDecisions = new Set(['request_more_evidence', 'release_payout', 'refund_full', 'refund_partial', 'split']);
@@ -69,5 +111,7 @@ export const adminRoutes = {
     'admin-listings-review': reviewListing,
     'admin-hosts-review': reviewHost,
     'admin-disputes-resolve': resolveDispute,
+    'admin-listing-change-review': reviewListingChange,
+    'admin-withdrawal-review': reviewWithdrawal,
   },
 };
