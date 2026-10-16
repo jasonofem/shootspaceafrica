@@ -30,6 +30,13 @@ The SQL files use the Supabase platform roles, `auth` schema and `storage` schem
 5. Create the first administrator manually in an owner-controlled SQL session after the user has registered; never grant admin from signup metadata or a public API.
 6. Configure `platform_settings` only after the owner approves terms and operating policy. `commission_bps` is constrained to 1500 (15%); host share is 85% of booking base. Creator fees default to zero and require explicit owner approval.
 7. Upload and approve genuine host inventory, photos and host records before opening public discovery.
+8. The notifications bell reads and marks notifications directly from the browser, with no API function (the Hobby plan allows at most 12). Reading works after the migrations above. Marking as read needs one extra column permission, because the migrations grant `select` on `public.notifications` and no `update`. Run this once in the Supabase SQL editor (Dashboard → SQL Editor → New query → Run) as the project owner:
+
+   ```sql
+   grant update (read_at) on public.notifications to authenticated;
+   ```
+
+   Row-level security (`notifications_owner_update`) still limits every write to the caller's own rows, and this grants only the `read_at` column. Until it is applied, the bell, the unread badge and the notifications list all work, and marking as read reports that it is not switched on yet.
 
 ## API and operational states
 

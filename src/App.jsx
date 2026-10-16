@@ -12,8 +12,10 @@ import { amenityLabels, categories, faqs, money } from './data.js';
 import { apiFetch, localDateAtLagos, makeIdempotencyKey } from './lib/api.js';
 import { publicSettings } from './config.js';
 import { supabase } from './lib/supabaseClient.js';
-import { useIsAdmin, useSession } from './lib/useSession.js';
+import { useIsAdmin, useHostProfile, useSession } from './lib/useSession.js';
 import { usePublicListings } from './hooks/usePublicListings.js';
+import { useNotifications } from './lib/useNotifications.js';
+import { formatUnreadCount, notificationBellLabel, notificationTime, notificationTitle } from './lib/notifications.js';
 import { assessTimeSlot, parseNairaToKobo } from './lib/businessRules.js';
 
 const ToastContext = createContext(() => {});
@@ -103,11 +105,35 @@ export function Header() {
   const [signingOut, setSigningOut] = useState(false);
   const { session, loading } = useSession();
   const isAdmin = useIsAdmin(session);
+  const { isHost, checking: hostChecking } = useHostProfile(session);
+  const notifications = useNotifications(session);
   useEffect(() => setOpen(false), [location.pathname]);
+  useEffect(() => { notifications.closePanel(); }, [location.pathname]);
   // Until the stored session is read, neither the signed-out nor the signed-in buttons are
   // rendered, so "Sign In"/"Get Started" never flash for a signed-in user.
   const signedIn = Boolean(session);
   const showAccountControls = !loading;
+  // Hosts get a way back to /host-dashboard instead of the "Become a Host" application link.
+  // The slot waits for the one-per-page-load host check so a host is never shown the
+  // application link first. Non-hosts keep "Become a Host" exactly as before.
+  const showHostNav = !loading && !hostChecking;
+  const showBell = showAccountControls && signedIn;
+  // Escape or a click outside closes the notification panel. The panel is a dropdown, not a route.
+  useEffect(() => {
+    if (!notifications.panelOpen) return undefined;
+    const onPointerDown = (event) => {
+      if (event.target?.closest?.('.notifications-panel, [data-notification-toggle]')) return;
+      notifications.closePanel();
+    };
+    const onKeyDown = (event) => { if (event.key === 'Escape') notifications.closePanel(); };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [notifications.panelOpen, notifications.closePanel]);
+  const toggleNotifications = () => { setOpen(false); notifications.togglePanel(); };
   const signOut = async () => {
     if (!supabase || signingOut) return;
     setSigningOut(true);
@@ -125,18 +151,54 @@ export function Header() {
   };
   return <header className="site-header"><div className="header-inner">
     <Link to="/" className="brand" aria-label="ShootSpace Africa home"><BrandMark /></Link>
-    <nav className="desktop-nav" aria-label="Main navigation"><Link to="/explore">Explore</Link><Link to="/host/onboarding">Become a Host</Link><a href="/#how-it-works">How It Works</a>
+    <nav className="desktop-nav" aria-label="Main navigation"><Link to="/explore">Explore</Link>{showHostNav && (isHost ? <Link to="/host-dashboard">Host dashboard</Link> : <Link to="/host/onboarding">Become a Host</Link>)}<a href="/#how-it-works">How It Works</a>
       {showAccountControls && (signedIn ? <><Link to="/creator-dashboard">Dashboard</Link>{isAdmin && <Link to="/admin-dashboard">Admin</Link>}</> : <Link to="/signin">Sign In</Link>)}
     </nav>
     <div className="header-actions">{showAccountControls && (signedIn
-      ? <button type="button" className="button button-secondary button-small" onClick={signOut} disabled={signingOut}>{signingOut ? 'Signing out…' : 'Sign out'}</button>
+      ? <><NotificationBell notifications={notifications} onToggle={toggleNotifications} /><button type="button" className="button button-secondary button-small" onClick={signOut} disabled={signingOut}>{signingOut ? 'Signing out…' : 'Sign out'}</button></>
       : <Link className="button button-primary button-small" to="/signup">Get Started</Link>)}</div>
-    <button type="button" className="mobile-menu-button" aria-label={open ? 'Close menu' : 'Open menu'} aria-expanded={open} onClick={() => setOpen((value) => !value)}>{open ? <X size={22} /> : <Menu size={22} />}</button>
-  </div>{open && <nav className="mobile-nav" aria-label="Mobile navigation"><Link to="/explore">Explore spaces</Link><Link to="/host/onboarding">Become a host</Link><a href="/#how-it-works">How it works</a>
+    <div className="header-mobile-actions">{showBell && <NotificationBell notifications={notifications} onToggle={toggleNotifications} />}
+      <button type="button" className="mobile-menu-button" aria-label={open ? 'Close menu' : 'Open menu'} aria-expanded={open} onClick={() => { notifications.closePanel(); setOpen((value) => !value); }}>{open ? <X size={22} /> : <Menu size={22} />}</button>
+    </div>
+  </div>{notifications.panelOpen && <NotificationsPanel notifications={notifications} />}{open && <nav className="mobile-nav" aria-label="Mobile navigation"><Link to="/explore">Explore spaces</Link>{showHostNav && (isHost ? <Link to="/host-dashboard">Host dashboard</Link> : <Link to="/host/onboarding">Become a host</Link>)}<a href="/#how-it-works">How it works</a>
     {showAccountControls && (signedIn
       ? <><Link to="/creator-dashboard">Dashboard</Link>{isAdmin && <Link to="/admin-dashboard">Admin</Link>}<button type="button" className="button button-secondary" onClick={signOut} disabled={signingOut}>{signingOut ? 'Signing out…' : 'Sign out'}</button></>
       : <><Link to="/signin">Sign in</Link><Link className="button button-primary" to="/signup">Get Started</Link></>)}
   </nav>}</header>;
+}
+/**
+ * The notifications bell. Shown in the desktop header next to Sign out and in the mobile top bar.
+ * Both copies drive the same panel, so the count never differs between them.
+ */
+function NotificationBell({ notifications, onToggle }) {
+  const badge = formatUnreadCount(notifications.unreadCount);
+  return <button type="button" data-notification-toggle className={`notification-bell${badge ? ' is-unread' : ''}`}
+    aria-label={notificationBellLabel(notifications.unreadCount)} aria-haspopup="true" aria-expanded={notifications.panelOpen}
+    aria-controls="notifications-panel" onClick={onToggle}>
+    <Bell size={18} aria-hidden="true" />
+    {badge && <span className="notification-badge" aria-hidden="true">{badge}</span>}
+  </button>;
+}
+function NotificationsPanel({ notifications }) {
+  const { items, unreadCount, loadingList, error, busy, actionError, markRead, markAllRead, closePanel, refresh } = notifications;
+  const newestFirst = [...items].sort((left, right) => String(right.created_at || '').localeCompare(String(left.created_at || '')));
+  return <section className="notifications-panel" id="notifications-panel" role="region" aria-label="Notifications">
+    <div className="notifications-head"><h2>Notifications</h2><div className="notifications-head-actions">
+      <button type="button" className="text-link" onClick={markAllRead} disabled={busy || unreadCount === 0}>Mark all as read</button>
+      <button type="button" className="notification-close" aria-label="Close notifications" onClick={closePanel}><X size={16} /></button>
+    </div></div>
+    {actionError && <p className="form-error" role="alert">{actionError}</p>}
+    {loadingList && !newestFirst.length ? <p className="notification-empty" role="status"><span className="loading-dot" />Loading notifications…</p>
+      : error && !newestFirst.length ? <div className="notification-empty"><p>{error}</p><button type="button" className="text-link" onClick={refresh}>Try again</button></div>
+      : !newestFirst.length ? <p className="notification-empty">No notifications yet.</p>
+      : <ul className="notification-list">{newestFirst.map((item) => {
+        const title = notificationTitle(item.event_type);
+        const time = notificationTime(item.created_at);
+        if (item.read_at) return <li key={item.id}><div className="notification-item is-read"><span className="notification-item-title">{title}</span><small>{time}</small></div></li>;
+        return <li key={item.id}><button type="button" className="notification-item is-unread" disabled={busy} onClick={() => markRead(item.id)} aria-label={`${title}. ${time}. Mark as read.`}><span className="notification-item-title">{title}</span><small>{time}</small></button></li>;
+      })}</ul>}
+    {Boolean(newestFirst.length) && !loadingList && <p className="notifications-foot">Opening a notification marks it as read. Booking, payment and review updates appear here.</p>}
+  </section>;
 }
 function Footer() {
   return <footer className="site-footer"><div className="footer-grid wrap">
