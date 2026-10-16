@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { Component, createContext, useContext, useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight, BadgeCheck, Banknote, Bell, CalendarDays, Camera, Check, CheckCircle2,
   ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Clock3, Copy,
@@ -56,6 +56,44 @@ function statusClass(value = '') {
   return 'badge-neutral';
 }
 
+// Redacts anything token-shaped before an error message is shown on screen.
+function safeErrorText(value) {
+  const text = String(value?.message || value || 'Unexpected error');
+  return text
+    .replace(/eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}/g, '[redacted]')
+    .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]');
+}
+
+// Shows a readable message instead of a blank page when any route crashes while rendering.
+class AppErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  componentDidCatch(error) {
+    console.error('Page render failed:', error);
+  }
+  render() {
+    if (this.state.error) {
+      return <div className="page-wrap wrap"><div className="panel error-boundary-panel" role="alert">
+        <p className="eyebrow">Something went wrong</p>
+        <h1>This page could not finish loading</h1>
+        <p>The message below is shown so this can be reported and fixed. It never includes passwords or secret keys.</p>
+        <pre className="error-detail">{safeErrorText(this.state.error)}</pre>
+        <div className="button-row"><button type="button" className="button button-primary" onClick={() => window.location.reload()}>Reload page</button><Link className="button button-secondary" to="/">Back to home</Link></div>
+      </div></div>;
+    }
+    return this.props.children;
+  }
+}
+function RouteErrorBoundary({ children }) {
+  const location = useLocation();
+  return <AppErrorBoundary key={location.pathname}>{children}</AppErrorBoundary>;
+}
+
 function App() {
   const [toast, setToast] = useState('');
   useEffect(() => {
@@ -65,6 +103,7 @@ function App() {
   }, [toast]);
   return <ToastContext.Provider value={setToast}>
     <BrowserRouter>
+      <RouteErrorBoundary>
       <Routes>
         <Route path="/" element={<SiteLayout><HomePage /></SiteLayout>} />
         <Route path="/explore" element={<SiteLayout><ExplorePage /></SiteLayout>} />
@@ -85,6 +124,7 @@ function App() {
         <Route path="/cancellation" element={<SiteLayout><PolicyPage kind="cancellation" /></SiteLayout>} />
         <Route path="*" element={<SiteLayout><NotFound /></SiteLayout>} />
       </Routes>
+      </RouteErrorBoundary>
     </BrowserRouter>
     {toast && <div className="toast" role="status"><CheckCircle2 size={17} />{toast}</div>}
   </ToastContext.Provider>;
@@ -772,14 +812,13 @@ function HostOnboarding() {
   </div>;
 }
 
-function OtpRoomPage() {
+export function OtpRoomPage() {
   const [params]=useSearchParams();
   const bookingId=params.get('bookingId');
-  const {data,error,loading,refresh}=useBookingDetails(bookingId);
+  const {booking,viewerRole,error,loading,refresh}=useBookingDetails(bookingId);
   const [code,setCode]=useState('');
   const [message,setMessage]=useState('');
   const [working,setWorking]=useState(false);
-  const booking=data?.booking;
   const issue=async()=>{
     setWorking(true);setMessage('');
     try{const result=await apiFetch('/api/bookings/otp',{method:'POST',body:{action:'issue',bookingId}});setMessage(`Your one-time code is ${result.code}. It expires ${dateTime(result.expires_at)}. It will not be saved for later.`);}
@@ -801,23 +840,28 @@ function OtpRoomPage() {
   if(!bookingId)return <div className="page-wrap wrap"><EmptyPanel title="Choose a booking first" text="Open this room from an eligible booking in your creator or host dashboard." action={<Link className="button button-primary" to="/creator-dashboard">Creator dashboard</Link>}/></div>;
   if(loading)return <div className="page-wrap wrap"><LoadingPanel text="Loading private booking details…"/></div>;
   if(error)return <div className="page-wrap wrap"><DashboardError error={error}/></div>;
-  return <div className="page-wrap wrap otp-room-page"><div className="panel otp-room-intro"><p className="eyebrow">Booking check-in room</p><h1>{booking.public_code}</h1><p>Private arrival information is visible only to booking participants after server-verified payment. Check-in is separate from completion and payout.</p></div><div className="otp-room-grid">
-    <section className="panel crew-summary"><h2>Booking details</h2><p><span>Location:</span> {booking.listing?.title}</p><p><span>Arrival address:</span> {booking.listing?.exact_address}</p><p><span>Host:</span> {booking.host?.public_display_name||'Host'}</p><p><span>Start:</span> {dateTime(booking.starts_at)}</p><p><span>End:</span> {dateTime(booking.ends_at)}</p><p><span>Production:</span> {booking.production_type} · {booking.crew_size} crew</p><p><span>Booking state:</span> <StatusBadge value={booking.booking_status}/></p><p><span>Payment state:</span> <StatusBadge value={booking.payment_status}/></p><p><span>Payout state:</span> <StatusBadge value={booking.payout_status}/></p></section>
+  if(!booking)return <div className="page-wrap wrap"><EmptyPanel title="Booking details unavailable" text="The booking could not be loaded for this account. It may have been removed, or you may not be a participant." action={<Link className="button button-primary" to="/creator-dashboard">Creator dashboard</Link>}/></div>;
+  const isCreator=viewerRole==='creator';
+  const isHost=viewerRole==='host';
+  const canGenerate=!viewerRole||isCreator;
+  const canVerify=!viewerRole||isHost;
+  return <div className="page-wrap wrap otp-room-page"><div className="panel otp-room-intro"><p className="eyebrow">Booking check-in room</p><h1>{booking.public_code||'Booking'}</h1><p>Private arrival information is visible only to booking participants after server-verified payment. Check-in is separate from completion and payout.</p></div><div className="otp-room-grid">
+    <section className="panel crew-summary"><h2>Booking details</h2><p><span>Location:</span> {booking.listing?.title||booking.listing_title_snapshot||'Production location'}</p><p><span>Arrival address:</span> {booking.listing?.exact_address||'Shared with booking participants after payment confirmation.'}</p><p><span>Host:</span> {booking.host?.public_display_name||'Host'}</p><p><span>Start:</span> {dateTime(booking.starts_at)}</p><p><span>End:</span> {dateTime(booking.ends_at)}</p><p><span>Production:</span> {booking.production_type||'Production'}{booking.crew_size?` · ${booking.crew_size} crew`:''}</p><p><span>Booking state:</span> <StatusBadge value={booking.booking_status}/></p><p><span>Payment state:</span> <StatusBadge value={booking.payment_status}/></p><p><span>Payout state:</span> <StatusBadge value={booking.payout_status}/></p></section>
     <section className="panel otp-control"><p>Only the creator can issue the booking-specific, expiring code. The host enters it here. Codes are hashed server-side and are never logged or saved in plaintext.</p>
-      <button type="button" className="button button-secondary button-block" disabled={working||booking.booking_status!=='confirmed'} onClick={issue}>Generate a creator check-in code</button>
-      <form onSubmit={verify}><label className="form-field"><span>Host: enter the creator's six-digit code</span><input className="otp-input" value={code} onChange={(event)=>setCode(event.target.value.replace(/\D/g,'').slice(0,6))} maxLength={6} inputMode="numeric" autoComplete="one-time-code" aria-label="Six-digit check-in code" placeholder="000000"/></label><button className="button button-primary button-block" type="submit" disabled={working||code.length!==6||booking.booking_status!=='confirmed'}>Verify check-in</button></form>
-      {booking.booking_status==='checked_in'&&<button type="button" className="button button-primary button-block" disabled={working} onClick={()=>complete('host_submit')}>Host: submit session completion</button>}
-      {booking.booking_status==='completion_pending'&&<button type="button" className="button button-secondary button-block" disabled={working} onClick={()=>complete('creator_confirm')}>Creator: confirm completion</button>}
+      {canGenerate&&<button type="button" className="button button-secondary button-block" disabled={working||booking.booking_status!=='confirmed'} onClick={issue}>Generate a creator check-in code</button>}
+      {canVerify&&<form onSubmit={verify}><label className="form-field"><span>Host: enter the creator's six-digit code</span><input className="otp-input" value={code} onChange={(event)=>setCode(event.target.value.replace(/\D/g,'').slice(0,6))} maxLength={6} inputMode="numeric" autoComplete="one-time-code" aria-label="Six-digit check-in code" placeholder="000000"/></label><button className="button button-primary button-block" type="submit" disabled={working||code.length!==6||booking.booking_status!=='confirmed'}>Verify check-in</button></form>}
+      {booking.booking_status==='checked_in'&&(!viewerRole||isHost)&&<button type="button" className="button button-primary button-block" disabled={working} onClick={()=>complete('host_submit')}>Host: submit session completion</button>}
+      {booking.booking_status==='completion_pending'&&(!viewerRole||isCreator)&&<button type="button" className="button button-secondary button-block" disabled={working} onClick={()=>complete('creator_confirm')}>Creator: confirm completion</button>}
       {message&&<p className="inline-operation-message" role="status">{message}</p>}
       <div className="status-panel"><small>Payment</small><strong>{displayStatus(booking.payment_status)}</strong><small>Payout</small><strong>{displayStatus(booking.payout_status)}</strong><small>Check-in alone never releases a payout. Open disputes keep funds held.</small></div>
-      <Link className="text-link" to={`/dispute?bookingId=${encodeURIComponent(booking.id)}`}>Open a dispute for this booking</Link>
+      {booking.id&&<Link className="text-link" to={`/dispute?bookingId=${encodeURIComponent(booking.id)}`}>Open a dispute for this booking</Link>}
     </section></div></div>;
 }
 function useBookingDetails(bookingId) {
-  const [state,setState]=useState({booking:null,loading:Boolean(bookingId),error:''});
+  const [state,setState]=useState({booking:null,viewerRole:null,loading:Boolean(bookingId),error:''});
   const [version,setVersion]=useState(0);
   const refresh=()=>setVersion((value)=>value+1);
-  useEffect(()=>{let active=true;if(!bookingId){setState({booking:null,loading:false,error:''});return undefined;}setState({booking:null,loading:true,error:''});apiFetch(`/api/bookings/${encodeURIComponent(bookingId)}`).then((result)=>{if(active)setState({booking:result.booking,loading:false,error:''});}).catch((error)=>{if(active)setState({booking:null,loading:false,error:error.message});});return()=>{active=false;};},[bookingId,version]);
+  useEffect(()=>{let active=true;if(!bookingId){setState({booking:null,viewerRole:null,loading:false,error:''});return undefined;}setState({booking:null,viewerRole:null,loading:true,error:''});apiFetch(`/api/bookings/${encodeURIComponent(bookingId)}`).then((result)=>{if(active)setState({booking:result?.booking||null,viewerRole:result?.viewerRole||null,loading:false,error:''});}).catch((error)=>{if(active)setState({booking:null,viewerRole:null,loading:false,error:error?.message||'Booking details could not be loaded.'});});return()=>{active=false;};},[bookingId,version]);
   return {...state,refresh};
 }
 
