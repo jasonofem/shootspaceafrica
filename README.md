@@ -40,6 +40,31 @@ The SQL files use the Supabase platform roles, `auth` schema and `storage` schem
 - Completion, disputes, payment and payout are distinct states. Disputes hold payout. The scheduled task only expires stale requests and marks eligible payouts; it does not transfer money or claim escrow.
 - Admin reviews/dispute decisions are server-side and audited. Refund/payout provider actions remain manual until real integrations and operational controls are approved.
 - Contact notification mail is optional; the contact request is saved before any configured email attempt. The recipient is read from `CONTACT_NOTIFICATION_TO`.
+- These URLs are grouped into 9 Vercel functions for the Hobby plan; the paths, payloads and responses are unchanged. See “Grouped API functions” below.
+
+## Grouped API functions (Vercel Hobby 12-function limit)
+
+Vercel Hobby allows at most 12 Serverless Functions per deployment. The public API is therefore grouped into **9 functions**, and every public URL, request shape and response shape is unchanged — the browser code in `src/` was not modified.
+
+| Function | Public URLs it serves | Route keys |
+| --- | --- | --- |
+| `api/bookings.js` | `/api/bookings/request`, `/api/bookings/respond`, `/api/bookings/cancel`, `/api/bookings/completion`, `/api/bookings/otp`, `/api/bookings/disputes`, `/api/bookings/dispute-evidence`, `/api/bookings/:id`, `/api/my-bookings` | `bookings-*` |
+| `api/listings.js` | `/api/listings` (default route), `/api/listings/:slug` | `listings-index`, `listings-detail` |
+| `api/platform.js` | `/api/amenities`, `/api/availability`, `/api/reviews`, `/api/settings` | `platform-*` |
+| `api/account.js` | `/api/me`, `/api/dashboard`, `/api/favorites`, `/api/contact` | `account-*` |
+| `api/host.js` | `/api/host/onboarding`, `/api/host/verification-document`, `/api/host/listings`, `/api/host/listings/photo`, `/api/host/listings/submit` | `host-*` |
+| `api/admin.js` | `/api/admin/listings/review`, `/api/admin/hosts/review`, `/api/admin/disputes/resolve` | `admin-*` |
+| `api/payments.js` | `/api/payments/initialize`, `/api/payments/status` | `payments-*` |
+| `api/webhooks/paystack.js` | `/api/webhooks/paystack` (unchanged URL, raw-body signature check) | – |
+| `api/cron/marketplace-maintenance.js` | `/api/cron/marketplace-maintenance` (unchanged URL, Vercel cron `0 0 * * *`) | – |
+
+How it works: handler code lives in `api/_lib/endpoints/*.js` (files under `_lib` are helpers, not functions), each thin function file dispatches with `createDispatcher()` from `api/_lib/routes.js`, and `vercel.json` `rewrites` map every public URL to its grouped function with the route key in the `route` query parameter. Rewrites run only after the filesystem misses, so their own query parameters are merged with the caller's (`?listingId=`, `?role=`, `?reference=`, `?amenities=` …), and `POST` bodies, `Authorization` headers, status codes, error messages and cache headers are passed through untouched. `/api/listings`, `/api/webhooks/paystack` and `/api/cron/marketplace-maintenance` are served directly by their function files and need no rewrite.
+
+Adding or changing an endpoint: add the handler to the matching module in `api/_lib/endpoints/`, register the route key in that module's route table, and add the `vercel.json` rewrite. `npm test` fails if a frontend `/api/` call has no rewrite, if a rewrite points at a missing route key, if a route key is unreachable, if the SPA rewrite or the cron schedule changed, or if `api/` grows past 12 function files. Verify with `find api -name '*.js' -not -path '*/_lib/*' | wc -l`.
+
+No environment variable was added, renamed or removed by this grouping. Server-side secrets stay server-side: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `OTP_HMAC_SECRET`, `CONTACT_RATE_LIMIT_SECRET`, `CRON_SECRET`, `PAYMENT_PROVIDER`, `PAYSTACK_SECRET_KEY`, `PAYMENT_RETURN_URL`, `PAYMENT_ENABLED` (optional: `CONTACT_NOTIFICATION_TO`, `OTP_TTL_MINUTES`, `RESEND_API_KEY`, `MAIL_FROM`). Browser-visible values stay `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
+
+If the Vercel project is deleted and re-imported, the site gets a new address. Update `PAYMENT_RETURN_URL` (`https://<site>/booking-confirmed`), the Paystack webhook URL (`https://<site>/api/webhooks/paystack`), and the Supabase Auth Site URL and Redirect URLs to the new address.
 
 ## Vercel and owner launch tasks
 
