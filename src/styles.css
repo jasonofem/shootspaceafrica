@@ -386,6 +386,9 @@ button.notification-item { cursor: pointer; }
 .dashboard-error strong { color: #fff; }
 .dashboard-error p { color: var(--muted); font-size: 11px; }
 .dashboard-error a { color: var(--orange-2); font-size: 11px; }
+.error-boundary-panel { max-width: 640px; margin: 40px auto; }
+.error-boundary-panel h1 { margin: 0 0 10px; }
+.error-detail { margin: 12px 0; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: #121216; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 .dashboard-feature > p { color: var(--muted); font-size: 11px; line-height: 1.55; margin: 0 0 12px; }
 .admin-queues { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; margin-bottom: 18px; }
 .queue-panel h2 { margin-bottom: 12px !important; font-size: 15px; }

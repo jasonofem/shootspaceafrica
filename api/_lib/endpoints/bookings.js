@@ -144,10 +144,10 @@ export async function registerDisputeEvidence(req, res) {
 export async function bookingDetail(req, res) {
   if (req.method !== 'GET') return methodNotAllowed(res, ['GET']);
   try {
-    const { userClient } = await requireUser(req);
+    const { userClient, user } = await requireUser(req);
     const id = String(req.query.id || '');
     if (!isUuid(id)) return res.status(400).json({ error: 'A valid booking id is required.' });
-    const { data: row, error } = await userClient.from('bookings').select(safeColumns).eq('id', id).maybeSingle();
+    const { data: row, error } = await userClient.from('bookings').select(`${safeColumns},creator_id,host_id`).eq('id', id).maybeSingle();
     if (error) throw error;
     if (!row) return res.status(404).json({ error: 'Booking was not found for this account.' });
     let privateDetails = null;
@@ -157,8 +157,40 @@ export async function bookingDetail(req, res) {
       privateDetails = result.data;
     }
     res.setHeader('Cache-Control', 'no-store, private');
-    return res.status(200).json({ booking: { ...row, ...(privateDetails || {}), listing: privateDetails?.listing || { title: row.listing_title_snapshot, city: row.listing_city_snapshot, neighbourhood: row.listing_neighbourhood_snapshot } }, privateDetailsAvailable: Boolean(privateDetails) });
+    return res.status(200).json(buildBookingDetailPayload(row, privateDetails, user.id));
   } catch (error) { return sendError(res, error, 'Booking details could not be loaded.'); }
+}
+
+// Builds the GET /api/bookings/:id body. The participant ids are never returned;
+// the page only needs to know which side of the booking it is on (viewerRole).
+export function buildBookingDetailPayload(row, privateDetails, userId) {
+  const viewerRole = row.creator_id === userId ? 'creator' : row.host_id === userId ? 'host' : null;
+  const listing = privateDetails?.listing || {
+    title: row.listing_title_snapshot,
+    city: row.listing_city_snapshot,
+    neighbourhood: row.listing_neighbourhood_snapshot,
+  };
+  const booking = {
+    id: row.id,
+    public_code: row.public_code,
+    listing_id: row.listing_id,
+    listing_title_snapshot: row.listing_title_snapshot,
+    listing_city_snapshot: row.listing_city_snapshot,
+    listing_neighbourhood_snapshot: row.listing_neighbourhood_snapshot,
+    starts_at: row.starts_at,
+    ends_at: row.ends_at,
+    crew_size: row.crew_size,
+    production_type: row.production_type,
+    booking_status: row.booking_status,
+    payment_status: row.payment_status,
+    payout_status: row.payout_status,
+    total_amount_kobo: row.total_amount_kobo,
+    creator_fee_kobo: row.creator_fee_kobo,
+    host_share_kobo_snapshot: row.host_share_kobo_snapshot,
+    ...(privateDetails || {}),
+    listing,
+  };
+  return { booking, viewerRole, privateDetailsAvailable: Boolean(privateDetails) };
 }
 
 export async function myBookings(req, res) {
