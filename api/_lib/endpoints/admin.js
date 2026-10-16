@@ -4,6 +4,7 @@
 //   POST /api/admin/disputes/resolve -> admin-disputes-resolve
 //   POST /api/admin/listings/change-review -> admin-listing-change-review
 //   POST /api/admin/withdrawals/review -> admin-withdrawal-review (records decisions only; sends no money)
+//   POST /api/admin/reviews/hide     -> admin-reviews-hide (hides a published creator rating; audited)
 import { requireRole, requireUser } from '../supabase.js';
 import { methodNotAllowed, readBody, sendError } from '../http.js';
 
@@ -98,6 +99,24 @@ export async function reviewWithdrawal(req, res) {
   } catch (error) { return sendError(res, error, 'Withdrawal review could not be completed.'); }
 }
 
+// Hides a published creator rating (sets it to 'rejected' with an audit log entry).
+// The row is kept; it simply stops appearing in public averages, /api/reviews and the leaderboard.
+export async function hideReview(req, res) {
+  if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
+  try {
+    const { userClient, user } = await requireUser(req);
+    await requireRole(userClient, user.id, 'admin');
+    const body = await readBody(req);
+    if (!isUuid(body.reviewId)) return res.status(400).json({ error: 'Rating id is required.' });
+    const reason = String(body.reason || '').trim();
+    if (reason.length < 5 || reason.length > 2000) return res.status(400).json({ error: 'An audit reason between 5 and 2,000 characters is required.' });
+    const { data, error } = await userClient.rpc('admin_hide_review', { p_review_id: body.reviewId, p_reason: reason });
+    if (error) throw error;
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(200).json(data);
+  } catch (error) { return sendError(res, error, 'The rating could not be hidden.'); }
+}
+
 const withdrawalDecisions = new Set(['approve', 'mark_paid', 'reject']);
 const listingDecisions = new Set(['approve', 'request_changes', 'reject', 'pause']);
 const hostDecisions = new Set(['approve', 'request_changes', 'reject', 'suspend']);
@@ -113,5 +132,6 @@ export const adminRoutes = {
     'admin-disputes-resolve': resolveDispute,
     'admin-listing-change-review': reviewListingChange,
     'admin-withdrawal-review': reviewWithdrawal,
+    'admin-reviews-hide': hideReview,
   },
 };

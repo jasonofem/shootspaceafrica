@@ -16,13 +16,15 @@ import { useIsAdmin, useHostProfile, useSession } from './lib/useSession.js';
 import { usePublicListings } from './hooks/usePublicListings.js';
 import { useNotifications } from './lib/useNotifications.js';
 import { formatUnreadCount, notificationBellLabel, notificationTime, notificationTitle } from './lib/notifications.js';
-import { assessTimeSlot, calculateBookingBaseKobo, parseNairaToKobo } from './lib/businessRules.js';
+import { assessTimeSlot, calculateBookingBaseKobo, compareByRatingRank, parseNairaToKobo, ratingSummary } from './lib/businessRules.js';
 
 const ToastContext = createContext(() => {});
 // Base price = rate per person per hour x hours x crew. Returns 0 for unusable inputs (e.g. sample data) instead of crashing the page.
 function bookingBaseKobo(rateKobo,hours,crew){try{return calculateBookingBaseKobo({hourlyRateKobo:rateKobo,hours,crewSize:crew});}catch{return 0n;}}
 const BOOKING_KEY = 'shootspace.booking-draft';
 const NO_FILTERS = Object.freeze({});
+// Fixed query for the Explore "Top rated" section; the server orders by listing_rankings.
+const TOP_RATED_FILTERS = Object.freeze({ sort: 'top_rated', pageSize: '6' });
 
 function readLocal(key, fallback = null) {
   try { return JSON.parse(localStorage.getItem(key) || 'null') ?? fallback; }
@@ -342,11 +344,12 @@ function SpaceCard({space}) {
     catch(error){if(error.message.includes('authentication')) navigate('/signin?next=/explore');else toast(error.message);}
     finally{setSaving(false);}
   };
+  const rating=ratingSummary(space);
   return <article className={`space-card${space.isSample?' is-sample':''}`}>
     <Link to={`/spaces/${space.id}`} className="space-card-image" aria-label={`View ${space.name}`}><img src={space.image} alt={space.name} loading="lazy"/>{space.verified&&<span className="verified-label"><CheckCircle2 size={12}/> Admin reviewed</span>}{space.isSample&&<span className="sample-card-label">DEV PREVIEW</span>}</Link>
     <div className="space-card-body"><div className="space-card-title-row"><Link to={`/spaces/${space.id}`}><h3>{space.name}</h3></Link><strong>{money(space.price)}<small>/hr</small></strong></div>
       <p className="space-location"><MapPin size={13}/>{[space.area,space.city].filter(Boolean).join(', ')}</p>
-      <div className="card-rating"><Star size={14} fill={space.rating==null?'none':'currentColor'}/>{space.rating==null?<span>No public reviews</span>:<><strong>{space.rating.toFixed(1)}</strong><span>({space.reviews})</span></>}</div>
+      <div className="card-rating"><Star size={14} fill={rating.kind==='none'?'none':'currentColor'}/>{rating.kind==='established'?<><strong>{space.rating.toFixed(1)}</strong><span>({space.reviews} rating{space.reviews===1?'':'s'})</span></>:<span>{rating.label}</span>}</div>
       <div className="tag-list">{space.amenities.slice(0,4).map((tag)=><span className="tag" key={tag}>{tag}</span>)}</div>
       <div className="space-card-actions"><Link className="button button-primary button-block" to={`/spaces/${space.id}`}>{space.isSample?'Preview only':'View & request'}</Link><button type="button" aria-label={saved?'Remove from saved locations':'Save location'} className={`save-button${saved?' is-saved':''}`} disabled={saving||space.isSample} onClick={toggleSaved}><Heart size={17} fill={saved?'currentColor':'none'}/></button></div>
     </div>
@@ -364,6 +367,10 @@ function ExplorePage() {
   const [filtersOpen,setFiltersOpen]=useState(false);
   const [verifiedOnly,setVerifiedOnly]=useState(false);
   const state=usePublicListings(filters);
+  const topRatedState=usePublicListings(TOP_RATED_FILTERS);
+  const topRatedSpaces=useMemo(()=>[...topRatedState.listings.filter((space)=>Number(space.reviews||0)>0)].sort(compareByRatingRank).slice(0,6),[topRatedState.listings]);
+  // The section only appears once at least one space has an established rating (3 or more).
+  const showTopRated=!topRatedState.loading&&!topRatedState.error&&topRatedSpaces.some((space)=>Number(space.reviews||0)>=3);
   const planningDate=params.get('date')||'';
   const planningCrew=params.has('crew')?Math.max(1,Math.min(500,Number(params.get('crew'))||1)):0;
   useEffect(()=>{
@@ -385,6 +392,7 @@ function ExplorePage() {
     </aside>
     <section className="explore-results"><div className="explore-title-row"><div><p className="eyebrow">For your next shoot</p><h1>Explore locations</h1><p>{state.loading?'Checking published inventory…':state.error?'Live listings could not be loaded.':`${visible.length} published location${visible.length===1?'':'s'} matching these filters.`}</p>{(planningDate||planningCrew>0)&&<small className="planning-note">Planning preference{planningDate?` · ${dateOnly(planningDate)}`:''}{planningCrew?` · ${planningCrew} crew`:''}. Open each location to check its availability; results are not filtered by date.</small>}</div><button className="button button-secondary filter-toggle" type="button" onClick={()=>setFiltersOpen((value)=>!value)}><Filter size={16}/> Filters</button></div>
       {state.sample&&<SampleNotice/>}
+      {showTopRated&&<section className="top-rated-section"><div className="top-rated-heading"><h2><Star size={16} fill="currentColor"/> Top rated spaces</h2><p className="helper-text">Ranked by creator ratings left after completed, paid sessions. A space needs 3 ratings to outrank newer ones; spaces with fewer ratings show as New.</p></div><div className="spaces-grid explore-grid">{topRatedSpaces.map((space)=><SpaceCard key={`top-${space.uuid||space.id}`} space={space}/>)}</div></section>}
       {state.error?<div className="empty-state"><CircleHelp size={24}/><h3>Live discovery is unavailable</h3><p>{state.error}</p><button className="button button-secondary" type="button" onClick={()=>window.location.reload()}>Retry</button></div>:state.loading?<div className="empty-state"><span className="loading-dot"/><p>Loading locations…</p></div>:visible.length?<div className="spaces-grid explore-grid">{visible.map((space)=><SpaceCard key={space.uuid||space.id} space={space}/>)}</div>:<div className="empty-state"><CircleHelp size={24}/><h3>No published spaces match these filters</h3><p>Try another city, category or amenity.</p><button className="button button-secondary" type="button" onClick={reset}>Reset filters</button></div>}
     </section>
   </div></div>;
@@ -440,10 +448,10 @@ function SpaceDetailsPage() {
   return <div className="page-wrap wrap detail-page">
     {space.isSample&&<SampleNotice/>}
     <div className="photo-gallery">{galleryImages.map((image,index)=><div className={`gallery-photo gallery-photo-${index+1}`} key={`${image}-${index}`}><img src={image} alt={`${space.name} location view ${index+1}`}/>{index===0&&space.verified&&<span className="verified-label"><CheckCircle2 size={13}/> Admin reviewed</span>}</div>)}<span className="gallery-count"><FileImage size={14}/>{space.images.length||0} approved photo{space.images.length===1?'':'s'}</span></div>
-    <div className="detail-layout"><div className="detail-main"><div className="detail-title"><div><p className="eyebrow">{space.category}</p><h1>{space.name}{space.area?` – ${space.area}`:''}</h1><p>{space.description}</p><div className="detail-meta"><span><MapPin size={15}/>{[space.area,space.city].filter(Boolean).join(', ')}</span><span><Star size={15} fill={space.rating==null?'none':'currentColor'}/>{space.rating==null?'No public reviews':`${space.rating.toFixed(1)} (${space.reviews} reviews)`}</span></div></div></div>
+    <div className="detail-layout"><div className="detail-main"><div className="detail-title"><div><p className="eyebrow">{space.category}</p><h1>{space.name}{space.area?` – ${space.area}`:''}</h1><p>{space.description}</p><div className="detail-meta"><span><MapPin size={15}/>{[space.area,space.city].filter(Boolean).join(', ')}</span><span><Star size={15} fill={ratingSummary(space).kind==='none'?'none':'currentColor'}/>{ratingSummary(space).label}</span></div></div></div>
       <section className="detail-section"><h2>Amenities</h2>{space.amenities.length?<div className="detail-amenities">{space.amenities.map((item)=><div className="detail-amenity" key={item}><Check size={16}/>{item}</div>)}</div>:<p className="helper-text">No amenities have been listed.</p>}</section>
       <section className="detail-section"><h2>House rules</h2>{space.rules.length?<ul className="rules-list">{space.rules.map((rule,index)=><li key={`${index}-${rule}`}>{rule}</li>)}</ul>:<p className="helper-text">No house rules were supplied in the listing.</p>}</section>
-      <section className="detail-section"><h2>Reviews</h2>{reviewError?<p className="helper-text">Public reviews could not be loaded.</p>:reviews.length?reviews.map((review,index)=><div className="review-card" key={`${review.created_at}-${index}`}><div className="rating-stars" aria-label={`${review.rating} out of 5 stars`}>{Array.from({length:5},(_,star)=><Star key={star} fill={star<review.rating?'currentColor':'none'}/>)}</div><p>{review.body||'Rating only.'}</p><small>Completed booking review · {dateOnly(review.created_at)}</small></div>):<div className="review-card"><p>No public reviews have been published for this location.</p></div>}</section>
+      <section className="detail-section"><h2>Reviews</h2>{reviewError?<p className="helper-text">Public reviews could not be loaded.</p>:reviews.length?reviews.map((review,index)=><div className="review-card" key={`${review.created_at}-${index}`}><div className="rating-stars" aria-label={`${review.rating} out of 5 stars`}>{Array.from({length:5},(_,star)=><Star key={star} fill={star<review.rating?'currentColor':'none'}/>)}</div><p>{review.body||'Rating only.'}</p><small>Completed booking review · {dateOnly(review.created_at)}</small></div>):<div className="review-card"><p>No ratings yet. Creators rate a space after a completed, paid session.</p></div>}</section>
       <section className="detail-section"><h2>Location area</h2><div className="location-card"><div className="map-illustration"><div className="map-lines"/><span className="map-pin"><MapPin size={17} fill="currentColor"/></span><span className="map-label">{(space.area||space.city||'Location').toUpperCase()}</span></div><p>{space.city}{space.area?` · ${space.area}`:''}. The exact arrival address is shared only with booking participants after server-confirmed payment.</p></div></section>
     </div>
     <aside className="booking-card"><div className="booking-rate"><strong>{money(space.price)}</strong><span>/hour per person</span></div>
@@ -615,11 +623,38 @@ function BookingRow({booking,children}) {
   return <article className="booking-row"><div className="booking-row-main"><strong>{booking.listing_title_snapshot||'Production location'}</strong><span>{booking.public_code} · {dateTime(booking.starts_at)}</span><span>{booking.crew_size?`${booking.crew_size} crew · `:''}{displayStatus(booking.booking_status)} · payment {displayStatus(booking.payment_status)}</span></div><div className="booking-row-side"><StatusBadge value={booking.payout_status}/>{children}</div></article>;
 }
 
+// Short 3-5 star rating prompt shown after a creator confirms completion and from
+// the "Rate your sessions" list. The server (submit_review) re-checks every rule.
+function RatingDialog({booking,onClose,onDone}) {
+  const [rating,setRating]=useState(0);
+  const [comment,setComment]=useState('');
+  const [error,setError]=useState('');
+  const [busy,setBusy]=useState(false);
+  const title=booking?.listing?.title||booking?.listing_title_snapshot||'the space';
+  const submit=async(event)=>{
+    event.preventDefault();
+    if(![3,4,5].includes(rating)){setError('Choose 3, 4 or 5 stars.');return;}
+    setBusy(true);setError('');
+    try{await apiFetch('/api/bookings/review',{method:'POST',body:{bookingId:booking.id,rating,body:comment.trim()}});onDone();}
+    catch(err){setError(err.message);}
+    finally{setBusy(false);}
+  };
+  return <div className="rating-backdrop" onClick={onClose}><form className="rating-dialog" role="dialog" aria-modal="true" aria-label="Rate this space" onClick={(event)=>event.stopPropagation()} onSubmit={submit}>
+    <div className="rating-dialog-head"><div><p className="eyebrow">Completed session</p><h2>How was {title}?</h2></div><button type="button" className="rating-close" aria-label="Close rating prompt" onClick={onClose}><X size={18}/></button></div>
+    <p className="helper-text">Ratings come from creators after completed, paid sessions only. Choose 3 to 5 stars; your comment is optional and public.</p>
+    <div className="rating-choice" role="group" aria-label="Star rating">{[3,4,5].map((value)=><button key={value} type="button" className={`rating-star${rating===value?' is-active':''}`} aria-pressed={rating===value} onClick={()=>setRating(value)}><Star size={26} fill={rating===value?'currentColor':'none'}/><span>{value} star{value===1?'':'s'}</span></button>)}</div>
+    <label className="form-field"><span>Comment (optional, max 1000 characters)</span><textarea rows={4} maxLength={1000} value={comment} onChange={(event)=>setComment(event.target.value)} placeholder="What worked well for your shoot?"/></label>
+    {error&&<p className="form-error" role="alert">{error}</p>}
+    <div className="booking-actions"><button className="button button-primary" type="submit" disabled={busy||!rating}>{busy?'Submitting…':'Submit rating'}</button><button className="button button-ghost" type="button" onClick={onClose}>Skip for now</button></div>
+  </form></div>;
+}
+
 function CreatorDashboard() {
   const {data,loading,error,refresh}=useDashboard('creator');
   const [settings,setSettings]=useState(null);
   const [actionError,setActionError]=useState('');
   const [busyId,setBusyId]=useState('');
+  const [ratingFor,setRatingFor]=useState(null);
   useEffect(()=>{apiFetch('/api/settings').then(setSettings).catch(()=>setSettings(null));},[]);
   const pay=async(booking)=>{
     setActionError('');setBusyId(booking.id);
@@ -646,13 +681,15 @@ function CreatorDashboard() {
   const bookings=data.bookings||[];
   const upcoming=bookings.filter((booking)=>booking.starts_at>=new Date().toISOString()&&!['cancelled','declined','expired'].includes(booking.booking_status));
   const past=bookings.filter((booking)=>booking.ends_at<new Date().toISOString());
+  const ratingsDue=data.ratingsDue||[];
   const saved=(data.favoriteListingIds||[]).map((id)=><ActionRow key={id} to={`/spaces/${id}`}>Open saved published location</ActionRow>);
   return <div className="dashboard-page wrap"><DashboardHeader title="Creator dashboard" subtitle="Persisted booking, payment and notification records."/>
     <div className="stats-grid"><StatCard icon={CalendarDays} label="Upcoming bookings" value={data.metrics.upcomingBookings}/><StatCard icon={Camera} label="Past bookings" value={data.metrics.pastBookings}/><StatCard icon={Heart} label="Saved spaces" value={data.metrics.savedSpaces}/><StatCard icon={Bell} label="Unread notifications" value={data.metrics.unreadNotifications}/></div>
     {actionError&&<p className="form-error" role="alert">{actionError}</p>}
+    {ratingsDue.length>0&&<section className="panel rate-sessions-panel"><h2><Star size={17}/> Rate your sessions</h2><p className="helper-text">Rate 3 to 5 stars after a completed, paid session. Ratings publish straight away and help other creators choose a space.</p>{ratingsDue.map((booking)=><BookingRow key={booking.id} booking={booking}><button type="button" className="button button-primary button-small" onClick={()=>setRatingFor(booking)}>Rate this space</button></BookingRow>)}</section>}
     <div className="dashboard-grid two-columns"><section className="panel"><h2>Upcoming &amp; active bookings</h2>{upcoming.length?upcoming.map((booking)=><BookingRow key={booking.id} booking={booking}><div className="booking-actions">
       {['accepted_awaiting_payment','payment_pending'].includes(booking.booking_status)&&<button type="button" className="button button-primary button-small" onClick={()=>pay(booking)} disabled={busyId===booking.id||!settings?.paymentEnabled}>{busyId===booking.id?'Opening…':booking.payment_status==='pending'?'Resume payment':'Pay with provider'}</button>}
-      {booking.booking_status==='completion_pending'&&<button type="button" className="button button-secondary button-small" onClick={async()=>{setBusyId(booking.id);try{await apiFetch('/api/bookings/completion',{method:'POST',body:{action:'creator_confirm',bookingId:booking.id}});refresh();}catch(err){setActionError(err.message);}finally{setBusyId('');}}}>Confirm completion</button>}
+      {booking.booking_status==='completion_pending'&&<button type="button" className="button button-secondary button-small" onClick={async()=>{setBusyId(booking.id);try{const result=await apiFetch('/api/bookings/completion',{method:'POST',body:{action:'creator_confirm',bookingId:booking.id}});refresh();if(result.booking_status==='completed')setRatingFor(booking);}catch(err){setActionError(err.message);}finally{setBusyId('');}}}>Confirm completion</button>}
       {booking.payment_status!=='paid'&&['request_pending','accepted_awaiting_payment','payment_pending'].includes(booking.booking_status)&&<button type="button" className="button button-secondary button-small" onClick={()=>cancel(booking)} disabled={busyId===booking.id}>Cancel unpaid request</button>}
       {booking.payment_status==='paid'&&<Link className="button button-secondary button-small" to={`/otp-room?bookingId=${encodeURIComponent(booking.id)}`}>Booking details</Link>}
       {booking.payment_status==='paid'&&<Link className="text-link" to={`/dispute?bookingId=${encodeURIComponent(booking.id)}`}>Open dispute</Link>}
@@ -660,6 +697,7 @@ function CreatorDashboard() {
     <section className="panel"><h2>Saved locations</h2>{saved.length?saved:<p className="empty-inline">No saved published locations yet.</p>}</section>
     <section className="panel"><h2>Recent booking history</h2>{past.length?past.slice(-8).map((booking)=><BookingRow key={booking.id} booking={booking}><Link className="text-link" to={`/dispute?bookingId=${encodeURIComponent(booking.id)}`}>Dispute centre</Link></BookingRow>):<p className="empty-inline">No past booking records.</p>}</section>
     <section className="panel dashboard-feature"><div className="panel-title-icon"><ShieldCheck size={18}/><h2>Payment and payout states</h2></div><p>Payment confirmation comes from the signed server webhook. Payout eligibility is separate; check-in does not release funds. Provider setup is required before a payment button is enabled.</p><Link className="button button-secondary" to="/cancellation">Read cancellation policy draft</Link></section></div>
+    {ratingFor&&<RatingDialog booking={ratingFor} onClose={()=>setRatingFor(null)} onDone={()=>{setRatingFor(null);refresh();}}/>}
   </div>;
 }
 
@@ -845,6 +883,13 @@ function AdminDashboard() {
       setMessage(decision==='approve'?'Change approved and now live. Existing bookings keep their original prices.':'Change rejected. The live listing is unchanged.');refresh();
     }catch(err){setMessage(err.message);}finally{setWorkingId('');}
   };
+  const hideRating=async(item)=>{
+    const reason=window.prompt(`Audit reason for hiding this rating (${item.listing_title||'listing'}, ${item.rating} stars):`);
+    if(!reason||reason.trim().length<5)return;
+    setWorkingId(item.id);setMessage('');
+    try{await apiFetch('/api/admin/reviews/hide',{method:'POST',body:{reviewId:item.id,reason:reason.trim()}});setMessage('Rating hidden. It no longer counts toward the space average.');refresh();}
+    catch(err){setMessage(err.message);}finally{setWorkingId('');}
+  };
   const reviewWithdrawal=async(item,decision)=>{
     const reason=window.prompt(`Audit reason for ${decision.replaceAll('_',' ')} (${money(item.amount_kobo)}):`);
     if(!reason||reason.trim().length<5)return;
@@ -881,6 +926,7 @@ function AdminDashboard() {
       <QueuePanel title="Hosts pending review" empty="No host applications.">{(queues.hosts||[]).map((item)=><div className="admin-queue-item" key={item.user_id}><strong>{item.public_display_name||'Host profile'}</strong><small>Host id {item.user_id.slice(0,8)} · {displayStatus(item.verification_status)}</small><div className="booking-actions"><button className="button button-primary button-small" disabled={workingId===item.user_id} onClick={()=>review('host',item,'approve')}>Approve</button><button className="button button-secondary button-small" disabled={workingId===item.user_id} onClick={()=>review('host',item,'request_changes')}>Request changes</button><button className="button button-secondary button-small" disabled={workingId===item.user_id} onClick={()=>review('host',item,'reject')}>Reject</button></div></div>)}</QueuePanel>
       <QueuePanel title="Listing change requests" empty="No pending change requests to a live listing.">{(queues.listingChanges||[]).map((item)=><div className="admin-queue-item" key={item.id}><strong>{item.listing?.title||'Listing'}</strong><small>Requested {dateTime(item.created_at)} · host {item.requested_by.slice(0,8)}</small><p>{item.reason}</p><ChangeDiff listing={item.listing} proposed={item.proposed_changes}/><div className="booking-actions"><button className="button button-primary button-small" disabled={workingId===item.id} onClick={()=>reviewChange(item,'approve')}>Approve change</button><button className="button button-secondary button-small" disabled={workingId===item.id} onClick={()=>reviewChange(item,'reject')}>Reject</button></div></div>)}</QueuePanel>
       <QueuePanel title="Withdrawal requests" empty="No withdrawal requests to review.">{withdrawalItems.map((item)=><div className="admin-queue-item" key={item.id}><strong>{money(item.amount_kobo)} · {item.requester_role==='platform'?'Company commission':'Host payout'}</strong><small>Requested {dateTime(item.requested_at)} · requester {item.requester_id.slice(0,8)}{item.payment_reference?` · reference ${item.payment_reference}`:''}</small>{item.note&&<p>{item.note}</p>}<StatusBadge value={item.status}/><div className="booking-actions">{item.status==='pending'&&<button className="button button-primary button-small" disabled={workingId===item.id} onClick={()=>reviewWithdrawal(item,'approve')}>Approve</button>}{item.status==='approved'&&<button className="button button-primary button-small" disabled={workingId===item.id} onClick={()=>reviewWithdrawal(item,'mark_paid')}>Mark paid (I paid it)</button>}{['pending','approved'].includes(item.status)&&<button className="button button-secondary button-small" disabled={workingId===item.id} onClick={()=>reviewWithdrawal(item,'reject')}>Reject and release</button>}</div></div>)}</QueuePanel>
+      <QueuePanel title="Creator ratings" empty="No published ratings yet.">{(queues.reviews||[]).slice(0,20).map((item)=><div className="admin-queue-item" key={item.id}><strong>{item.listing_title||'Listing'} · {item.rating} stars</strong><small>{dateTime(item.created_at)} · reviewer {String(item.reviewer_id).slice(0,8)}</small>{item.body&&<p>{item.body}</p>}<div className="booking-actions"><button className="button button-secondary button-small" disabled={workingId===item.id} onClick={()=>hideRating(item)}>Hide rating</button></div></div>)}</QueuePanel>
       <QueuePanel title="Dispute queue" empty="No disputes are recorded.">{(queues.disputes||[]).filter((item)=>!['resolved','closed'].includes(item.status)).map((item)=><div className="admin-queue-item" key={item.id}><strong>{displayStatus(item.dispute_type)} · {displayStatus(item.status)}</strong><small>{item.description}</small><div className="booking-actions"><button className="button button-secondary button-small" onClick={()=>resolve(item,'request_more_evidence')}>Request evidence</button><button className="button button-primary button-small" onClick={()=>resolve(item,'release_payout')}>Resolve: no refund</button><button className="button button-secondary button-small" onClick={()=>resolve(item,'refund_full')}>Record full refund</button><button className="button button-secondary button-small" onClick={()=>resolve(item,'refund_partial')}>Record partial refund</button></div><p className="helper-text">Refund and payout provider actions are not automated here.</p></div>)}</QueuePanel>
       <QueuePanel title="Recent provider payments" empty="No payment attempts recorded.">{(queues.payments||[]).slice(0,12).map((item)=><div className="listing-row" key={item.id}><span><strong>{money(item.amount_kobo)}</strong><small>{item.provider_reference} · booking {item.booking_id.slice(0,8)}</small></span><StatusBadge value={item.status}/></div>)}</QueuePanel>
       <QueuePanel title="Contact requests" empty="No contact submissions.">{(queues.contacts||[]).slice(0,15).map((item)=><div className="admin-queue-item" key={item.id}><strong>{item.subject}</strong><small>{item.full_name} · {item.email} · {dateTime(item.created_at)}</small><p>{item.message}</p><StatusBadge value={item.status}/></div>)}</QueuePanel>
@@ -996,6 +1042,8 @@ export function OtpRoomPage() {
   const [code,setCode]=useState('');
   const [message,setMessage]=useState('');
   const [working,setWorking]=useState(false);
+  const [ratingFor,setRatingFor]=useState(null);
+  const [ratedHere,setRatedHere]=useState(false);
   const issue=async()=>{
     setWorking(true);setMessage('');
     try{const result=await apiFetch('/api/bookings/otp',{method:'POST',body:{action:'issue',bookingId}});setMessage(`Your one-time code is ${result.code}. It expires ${dateTime(result.expires_at)}. It will not be saved for later.`);}
@@ -1010,7 +1058,8 @@ export function OtpRoomPage() {
   };
   const complete=async(action)=>{
     setWorking(true);setMessage('');
-    try{const result=await apiFetch('/api/bookings/completion',{method:'POST',body:{action,bookingId}});setMessage(`Status updated to ${displayStatus(result.booking_status)}. Payout remains held.`);refresh();}
+    try{const result=await apiFetch('/api/bookings/completion',{method:'POST',body:{action,bookingId}});setMessage(`Status updated to ${displayStatus(result.booking_status)}. Payout remains held.`);refresh();
+      if(action==='creator_confirm'&&result.booking_status==='completed')setRatingFor(booking);}
     catch(err){setMessage(err.message);}
     finally{setWorking(false);}
   };
@@ -1029,10 +1078,13 @@ export function OtpRoomPage() {
       {canVerify&&<form onSubmit={verify}><label className="form-field"><span>Host: enter the creator's six-digit code</span><input className="otp-input" value={code} onChange={(event)=>setCode(event.target.value.replace(/\D/g,'').slice(0,6))} maxLength={6} inputMode="numeric" autoComplete="one-time-code" aria-label="Six-digit check-in code" placeholder="000000"/></label><button className="button button-primary button-block" type="submit" disabled={working||code.length!==6||booking.booking_status!=='confirmed'}>Verify check-in</button></form>}
       {booking.booking_status==='checked_in'&&(!viewerRole||isHost)&&<button type="button" className="button button-primary button-block" disabled={working} onClick={()=>complete('host_submit')}>Host: submit session completion</button>}
       {booking.booking_status==='completion_pending'&&(!viewerRole||isCreator)&&<button type="button" className="button button-secondary button-block" disabled={working} onClick={()=>complete('creator_confirm')}>Creator: confirm completion</button>}
+      {booking.booking_status==='completed'&&(!viewerRole||isCreator)&&!ratedHere&&<button type="button" className="button button-secondary button-block" onClick={()=>setRatingFor(booking)}><Star size={16}/> Rate this session (3–5 stars)</button>}
       {message&&<p className="inline-operation-message" role="status">{message}</p>}
       <div className="status-panel"><small>Payment</small><strong>{displayStatus(booking.payment_status)}</strong><small>Payout</small><strong>{displayStatus(booking.payout_status)}</strong><small>Check-in alone never releases a payout. Open disputes keep funds held.</small></div>
       {booking.id&&<Link className="text-link" to={`/dispute?bookingId=${encodeURIComponent(booking.id)}`}>Open a dispute for this booking</Link>}
-    </section></div></div>;
+    </section></div>
+    {ratingFor&&<RatingDialog booking={ratingFor} onClose={()=>setRatingFor(null)} onDone={()=>{setRatingFor(null);setRatedHere(true);setMessage('Thank you. Your rating is published on the space.');refresh();}}/>}
+  </div>;
 }
 function useBookingDetails(bookingId) {
   const [state,setState]=useState({booking:null,viewerRole:null,loading:Boolean(bookingId),error:''});

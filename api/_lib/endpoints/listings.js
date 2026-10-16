@@ -12,18 +12,13 @@ export async function listingIndex(req, res) {
     const anon = getAnonymousClient();
     const service = getServiceClient();
     const query = req.query || {};
+    if (String(query.sort || '') === 'top_rated') return respondTopRated(req, res, anon, service, query);
     const page = Math.max(1, Math.min(1000, Number.parseInt(query.page || '1', 10) || 1));
     const pageSize = Math.max(1, Math.min(PAGE_SIZE_MAX, Number.parseInt(query.pageSize || '12', 10) || 12));
     const from = (page - 1) * pageSize;
     const to = from + pageSize - 1;
     let request = anon.from('public_listings').select('*', { count: 'exact' }).eq('status', 'published');
-    const location = cleanSearch(query.location);
-    const category = cleanSearch(query.category);
-    if (location) request = request.or(`city.ilike.%${location}%,neighbourhood.ilike.%${location}%`);
-    if (category) request = request.ilike('category', `%${category}%`);
-    if (query.maxPriceKobo && Number.isSafeInteger(Number(query.maxPriceKobo))) request = request.lte('hourly_rate_kobo', Number(query.maxPriceKobo));
-    const amenities = typeof query.amenities === 'string' ? query.amenities.split(',').map(cleanSearch).filter(Boolean).slice(0, 12) : [];
-    if (amenities.length) request = request.contains('amenities', amenities);
+    request = applyListingFilters(request, query);
     const sort = String(query.sort || 'newest');
     if (sort === 'price_asc') request = request.order('hourly_rate_kobo', { ascending: true });
     else if (sort === 'price_desc') request = request.order('hourly_rate_kobo', { ascending: false });
@@ -36,6 +31,39 @@ export async function listingIndex(req, res) {
   } catch (error) {
     return sendError(res, error, 'Unable to load public listings.');
   }
+}
+
+// Top-rated leaderboard: ordered by public.listing_rankings (rating average, with a
+// 3-rating minimum to outrank newer spaces). Filters still apply; the ranked set is
+// bounded for the pilot, so the full result is returned in one page.
+const TOP_RATED_MAX = 200;
+
+async function respondTopRated(req, res, anon, service, query) {
+  const { data: ranked, error: rankedError } = await anon.from('listing_rankings').select('listing_id,rank').order('rank', { ascending: true }).limit(TOP_RATED_MAX);
+  if (rankedError) throw rankedError;
+  const rankById = new Map((ranked || []).map((row) => [row.listing_id, Number(row.rank)]));
+  let rows = [];
+  if (rankById.size) {
+    let request = anon.from('public_listings').select('*').eq('status', 'published').in('id', [...rankById.keys()]);
+    request = applyListingFilters(request, query);
+    const { data, error } = await request.order('created_at', { ascending: false }).limit(TOP_RATED_MAX);
+    if (error) throw error;
+    rows = (data || []).sort((left, right) => rankById.get(left.id) - rankById.get(right.id));
+  }
+  const listings = await attachSignedPhotos(service, rows);
+  res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
+  return res.status(200).json({ listings, total: rows.length, page: 1, pageSize: rows.length || 1, hasMore: false, sort: 'top_rated' });
+}
+
+function applyListingFilters(request, query) {
+  const location = cleanSearch(query.location);
+  const category = cleanSearch(query.category);
+  if (location) request = request.or(`city.ilike.%${location}%,neighbourhood.ilike.%${location}%`);
+  if (category) request = request.ilike('category', `%${category}%`);
+  if (query.maxPriceKobo && Number.isSafeInteger(Number(query.maxPriceKobo))) request = request.lte('hourly_rate_kobo', Number(query.maxPriceKobo));
+  const amenities = typeof query.amenities === 'string' ? query.amenities.split(',').map(cleanSearch).filter(Boolean).slice(0, 12) : [];
+  if (amenities.length) request = request.contains('amenities', amenities);
+  return request;
 }
 
 export async function listingDetail(req, res) {

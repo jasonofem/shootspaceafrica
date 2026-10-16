@@ -1,5 +1,47 @@
 export const PLATFORM_COMMISSION_BPS = 1500;
 
+// Creator ratings leaderboard (owner decision 2026-10-16): a space needs at least
+// MIN_RATINGS_FOR_RANK published ratings to rank above spaces with fewer ratings.
+// Ties: higher average first, then more ratings first, then the newest rating first.
+export const MIN_RATINGS_FOR_RANK = 3;
+
+export function hasEstablishedRating(space) {
+  return Number(space?.reviews || 0) >= MIN_RATINGS_FOR_RANK;
+}
+
+// Sorts spaces for the "Top rated" leaderboard. Accepts objects shaped like
+// normalizeListing output ({ rating, reviews }) or { averageRating, ratingCount, latestRatingAt }.
+export function compareByRatingRank(left, right) {
+  const a = normalizeRatingInput(left);
+  const b = normalizeRatingInput(right);
+  const aRanked = a.count >= MIN_RATINGS_FOR_RANK;
+  const bRanked = b.count >= MIN_RATINGS_FOR_RANK;
+  if (aRanked !== bRanked) return aRanked ? -1 : 1;
+  if (b.average !== a.average) return b.average - a.average;
+  if (b.count !== a.count) return b.count - a.count;
+  return String(b.latest).localeCompare(String(a.latest));
+}
+
+function normalizeRatingInput(space) {
+  const average = Number(space?.rating ?? space?.averageRating ?? 0);
+  const count = Number(space?.reviews ?? space?.ratingCount ?? 0);
+  return {
+    average: Number.isFinite(average) ? average : 0,
+    count: Number.isFinite(count) ? count : 0,
+    latest: space?.latestRatingAt || '',
+  };
+}
+
+// Card/detail label: never show an average from fewer than 3 ratings ("New" instead),
+// so a single 5-star rating cannot be mistaken for an established score.
+export function ratingSummary(space) {
+  const count = Number(space?.reviews ?? space?.ratingCount ?? 0);
+  const average = Number(space?.rating ?? space?.averageRating ?? 0);
+  if (!Number.isFinite(count) || count <= 0) return { kind: 'none', label: 'No ratings yet' };
+  if (count < MIN_RATINGS_FOR_RANK) return { kind: 'new', label: `New · ${count} rating${count === 1 ? '' : 's'}` };
+  return { kind: 'established', label: `${Number.isFinite(average) ? average.toFixed(1) : '–'} (${count} ratings)` };
+}
+
 function asKobo(value, label = 'Amount') {
   let amount;
   try { amount = BigInt(value); }

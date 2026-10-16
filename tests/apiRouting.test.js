@@ -20,11 +20,11 @@ const PUBLIC_URLS = [
   '/api/listings', '/api/listings/:slug', '/api/amenities', '/api/availability', '/api/reviews', '/api/settings',
   '/api/me', '/api/dashboard', '/api/favorites', '/api/contact', '/api/my-bookings',
   '/api/bookings/request', '/api/bookings/respond', '/api/bookings/cancel', '/api/bookings/completion',
-  '/api/bookings/otp', '/api/bookings/disputes', '/api/bookings/dispute-evidence', '/api/bookings/:id',
+  '/api/bookings/otp', '/api/bookings/disputes', '/api/bookings/dispute-evidence', '/api/bookings/review', '/api/bookings/:id',
   '/api/host/onboarding', '/api/host/verification-document', '/api/host/listings',
   '/api/host/listings/photo', '/api/host/listings/submit', '/api/host/listings/change-request',
   '/api/admin/listings/review', '/api/admin/hosts/review', '/api/admin/disputes/resolve',
-  '/api/admin/listings/change-review', '/api/admin/withdrawals/review',
+  '/api/admin/listings/change-review', '/api/admin/withdrawals/review', '/api/admin/reviews/hide',
   '/api/payments/initialize', '/api/payments/status', '/api/payments/withdrawal',
 ];
 

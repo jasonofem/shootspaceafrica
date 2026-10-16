@@ -756,3 +756,26 @@ button.notification-item { cursor: pointer; }
 /* Payouts and company commission panels. */
 .payout-stats, .company-commission-panel .stats-grid { margin: 12px 0; }
 .payout-panel h3 { margin-top: 18px; }
+
+/* Creator ratings: 3-5 star prompt after a completed, paid session. */
+.rating-backdrop { position: fixed; inset: 0; z-index: 90; display: flex; align-items: center; justify-content: center; padding: 18px; background: rgba(8, 8, 11, .72); backdrop-filter: blur(6px); }
+.rating-dialog { width: min(520px, 100%); max-height: calc(100vh - 48px); overflow: auto; display: grid; gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; box-shadow: 0 24px 60px rgba(0, 0, 0, .5); }
+.rating-dialog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.rating-dialog-head h2 { margin: 2px 0 0; font-size: 20px; }
+.rating-close { border: 1px solid var(--border); background: var(--surface-2); border-radius: 9px; padding: 7px; color: var(--muted); cursor: pointer; }
+.rating-choice { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.rating-star { display: grid; justify-items: center; gap: 4px; padding: 14px 8px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); color: var(--muted); cursor: pointer; font-size: 12px; }
+.rating-star svg { color: var(--yellow); }
+.rating-star.is-active { border-color: var(--orange); color: var(--text); background: rgba(255, 116, 20, .1); box-shadow: 0 0 0 1px var(--orange); }
+
+/* "Rate your sessions" list on the creator dashboard. */
+.rate-sessions-panel { margin-top: 16px; }
+.rate-sessions-panel h2 { display: flex; align-items: center; gap: 8px; }
+.rate-sessions-panel h2 svg { color: var(--yellow); }
+
+/* Explore "Top rated spaces" leaderboard section. */
+.top-rated-section { margin: 18px 0 26px; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius); background: linear-gradient(160deg, rgba(255, 116, 20, .07), rgba(24, 24, 30, .6)); }
+.top-rated-heading { display: grid; gap: 4px; margin-bottom: 12px; }
+.top-rated-heading h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 18px; }
+.top-rated-heading h2 svg { color: var(--yellow); }
+.top-rated-heading .helper-text { margin: 0; }
