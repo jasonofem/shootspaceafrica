@@ -6,6 +6,6 @@
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ],
   "crons": [
-    { "path": "/api/cron/marketplace-maintenance", "schedule": "*/15 * * * *" }
+    { "path": "/api/cron/marketplace-maintenance", "schedule": "0 0 * * *" }
   ]
 }
