@@ -1,8 +1,14 @@
+// Payments area. Public URLs (unchanged):
+//   POST /api/payments/initialize -> payments-initialize
+//   GET  /api/payments/status     -> payments-status
+//
+// Vendor webhooks stay on their own function so the raw body signature check
+// keeps running with the body parser disabled: /api/webhooks/paystack.
 import { randomUUID } from 'node:crypto';
-import { getServiceClient, requireUser } from '../_lib/supabase.js';
-import { methodNotAllowed, readBody, sendError } from '../_lib/http.js';
+import { getServiceClient, requireUser } from '../supabase.js';
+import { methodNotAllowed, readBody, sendError } from '../http.js';
 
-export default async function handler(req, res) {
+export async function initializePayment(req, res) {
   if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
   const secret = process.env.PAYSTACK_SECRET_KEY;
   if (process.env.PAYMENT_ENABLED !== 'true' || process.env.PAYMENT_PROVIDER !== 'paystack' || !secret || !process.env.PAYMENT_RETURN_URL) {
@@ -52,4 +58,27 @@ export default async function handler(req, res) {
     return res.status(200).json({ authorization_url: result.data.authorization_url, reference: payment.reference, status: 'pending' });
   } catch (error) { return sendError(res, error, 'Payment initialization failed. No payment has been confirmed.'); }
 }
+
+export async function paymentStatus(req, res) {
+  if (req.method !== 'GET') return methodNotAllowed(res, ['GET']);
+  try {
+    const { userClient } = await requireUser(req);
+    const reference = String(req.query.reference || '').trim().slice(0, 100);
+    if (!/^SSA-[A-Za-z0-9-]{10,90}$/.test(reference)) return res.status(400).json({ error: 'A valid payment reference is required.' });
+    const { data, error } = await userClient.from('payments').select('booking_id,status,amount_kobo,currency').eq('provider_reference', reference).maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Payment was not found for this account.' });
+    res.setHeader('Cache-Control', 'no-store, private');
+    return res.status(200).json({ bookingId: data.booking_id, status: data.status, amountKobo: data.amount_kobo, currency: data.currency });
+  } catch (error) { return sendError(res, error, 'Payment status could not be checked.'); }
+}
+
 function isUuid(value) { return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || '')); }
+
+export const paymentRoutes = {
+  defaultRoute: null,
+  routes: {
+    'payments-initialize': initializePayment,
+    'payments-status': paymentStatus,
+  },
+};
