@@ -39,6 +39,49 @@ export function useSession() {
 }
 
 /**
+ * Tracks whether the signed-in user has a host profile, so the header can offer a way back to
+ * /host-dashboard. Every verification status counts as a host (not_started, pending, approved,
+ * needs_changes, rejected, suspended) because the dashboard itself explains the current review
+ * state and a host must be able to return to it. A creator-only account has no host_profiles
+ * row, so it never sees the link.
+ *
+ * Returns { isHost, checking }. The check runs once for each signed-in user id — the header does
+ * not remount on route changes, so browsing the site does not repeat it. `checking` is true only
+ * while that first check is still pending, so the header can avoid labelling a host as
+ * "Become a Host" even for one frame.
+ *
+ * This is a navigation convenience, not access control: /api/dashboard?role=host re-checks the
+ * role on the server, and the row read here is the caller's own row, which the
+ * host_profile_read_owner_admin policy already allows.
+ */
+export function useHostProfile(session) {
+  const userId = session?.user?.id ?? '';
+  const [result, setResult] = useState({ userId: '', isHost: false });
+
+  useEffect(() => {
+    if (!supabase || !userId) return undefined;
+    let active = true;
+    (async () => {
+      let isHost = false;
+      try {
+        const { data, error } = await supabase.from('host_profiles').select('user_id').eq('user_id', userId).maybeSingle();
+        isHost = !error && Boolean(data);
+      } catch {
+        isHost = false;
+      }
+      // A result for a previous user id is discarded: the account may have signed out or changed.
+      if (active) setResult({ userId, isHost });
+    })();
+    return () => { active = false; };
+  }, [userId]);
+
+  return {
+    isHost: Boolean(userId) && result.userId === userId && result.isHost,
+    checking: Boolean(userId) && result.userId !== userId,
+  };
+}
+
+/**
  * True only when the signed-in user holds the 'admin' role. Used to decide whether the
  * header shows a link to /admin-dashboard; it is not an access control. Every /api/admin/*
  * route re-checks the role on the server, and the row this reads is the caller's own
