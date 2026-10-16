@@ -53,6 +53,9 @@ function publicErrorMessage(message, status) {
     'no_eligible_payouts', 'no_available_commission', 'withdrawal_not_open', 'invalid_withdrawal_decision',
     'withdrawal_reference_required', 'withdrawal_reference_already_used', 'withdrawal_item_not_eligible',
     'withdrawal_not_found', 'withdrawal_rate_limited',
+    'booking_not_found', 'review_not_for_your_booking', 'review_requires_completed_booking',
+    'review_requires_paid_booking', 'review_blocked_by_open_dispute', 'review_rating_out_of_range',
+    'review_body_too_long', 'review_already_submitted', 'review_not_found',
   ]);
   if (known.has(message)) return message.replaceAll('_', ' ');
   if (status >= 500) return 'The service is not configured or is temporarily unavailable. Please try again later.';

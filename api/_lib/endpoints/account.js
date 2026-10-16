@@ -106,13 +106,17 @@ export async function contact(req, res) {
 
 async function creatorSummary(client, userId) {
   const now = new Date().toISOString();
-  const [bookings, favoritesResult, unread] = await Promise.all([
+  const [bookings, favoritesResult, unread, myReviews] = await Promise.all([
     client.from('bookings').select('id,public_code,listing_id,listing_title_snapshot,listing_city_snapshot,listing_neighbourhood_snapshot,starts_at,ends_at,booking_status,payment_status,payout_status,total_amount_kobo,creator_fee_kobo').eq('creator_id', userId).order('starts_at', { ascending: true }).limit(100),
     client.from('favorites').select('listing_id,created_at').eq('creator_id', userId).order('created_at', { ascending: false }).limit(100),
     client.from('notifications').select('id', { count: 'exact', head: true }).eq('recipient_id', userId).is('read_at', null),
+    client.from('reviews').select('booking_id').eq('reviewer_id', userId),
   ]);
-  for (const result of [bookings, favoritesResult, unread]) if (result.error) throw result.error;
+  for (const result of [bookings, favoritesResult, unread, myReviews]) if (result.error) throw result.error;
   const rows = bookings.data || [];
+  // Completed, paid sessions this creator has not rated yet ("Rate your sessions").
+  const ratedBookingIds = new Set((myReviews.data || []).map((item) => item.booking_id));
+  const ratingsDue = rows.filter((item) => item.booking_status === 'completed' && item.payment_status === 'paid' && !ratedBookingIds.has(item.id));
   return {
     metrics: {
       upcomingBookings: rows.filter((item) => item.starts_at >= now && !['cancelled', 'declined', 'expired'].includes(item.booking_status)).length,
@@ -121,6 +125,7 @@ async function creatorSummary(client, userId) {
       unreadNotifications: unread.count || 0,
     },
     bookings: rows,
+    ratingsDue,
     favoriteListingIds: (favoritesResult.data || []).map((item) => item.listing_id),
   };
 }
@@ -181,7 +186,7 @@ function sumKobo(rows, getValue) {
 }
 
 async function adminSummary(client) {
-  const [listings, hosts, bookings, payments, disputes, payouts, contacts, withdrawals, commissionClaims, changeRequests] = await Promise.all([
+  const [listings, hosts, bookings, payments, disputes, payouts, contacts, withdrawals, commissionClaims, changeRequests, reviewQueue] = await Promise.all([
     client.from('listings').select('id,title,slug,owner_id,status,city,neighbourhood,created_at').eq('status', 'submitted').order('submitted_at', { ascending: true }).limit(100),
     client.from('host_profiles').select('user_id,public_display_name,verification_status,created_at').eq('verification_status', 'pending').order('created_at', { ascending: true }).limit(100),
     client.from('bookings').select('id,public_code,booking_status,payment_status,payout_status,total_amount_kobo,commission_kobo_snapshot,creator_fee_kobo,starts_at,ends_at,listing_title_snapshot,host_share_kobo_snapshot').order('created_at', { ascending: false }).limit(1000),
@@ -192,8 +197,9 @@ async function adminSummary(client) {
     client.from('withdrawal_requests').select('id,requester_id,requester_role,amount_kobo,status,note,payment_reference,requested_at,reviewed_at,paid_at,review_reason').order('requested_at', { ascending: false }).limit(200),
     client.from('withdrawal_request_commissions').select('booking_id').limit(5000),
     client.from('listing_change_requests').select('id,listing_id,requested_by,proposed_changes,reason,status,created_at').eq('status', 'pending').order('created_at', { ascending: true }).limit(100),
+    client.from('reviews').select('id,listing_id,reviewer_id,rating,body,moderation_status,created_at').eq('moderation_status', 'published').order('created_at', { ascending: false }).limit(100),
   ]);
-  for (const result of [listings, hosts, bookings, payments, disputes, payouts, contacts, withdrawals, commissionClaims, changeRequests]) if (result.error) throw result.error;
+  for (const result of [listings, hosts, bookings, payments, disputes, payouts, contacts, withdrawals, commissionClaims, changeRequests, reviewQueue]) if (result.error) throw result.error;
   const bookingRows = bookings.data || [];
   const paymentRows = payments.data || [];
   const payoutRows = payouts.data || [];
@@ -217,6 +223,15 @@ async function adminSummary(client) {
     : { data: [], error: null };
   if (changeListings.error) throw changeListings.error;
   const listingById = new Map((changeListings.data || []).map((row) => [row.id, row]));
+
+  // Published creator ratings, with the space title attached for the admin "Creator ratings" panel.
+  const reviewRows = reviewQueue.data || [];
+  const reviewListingIds = [...new Set(reviewRows.map((row) => row.listing_id))].filter((id) => !listingById.has(id));
+  const reviewListings = reviewListingIds.length
+    ? await client.from('listings').select('id,title').in('id', reviewListingIds)
+    : { data: [], error: null };
+  if (reviewListings.error) throw reviewListings.error;
+  for (const row of reviewListings.data || []) listingById.set(row.id, { ...listingById.get(row.id), ...row });
 
   return {
     metrics: {
@@ -246,6 +261,7 @@ async function adminSummary(client) {
       payouts: payoutRows,
       withdrawals: withdrawalRows,
       listingChanges: changeRows.map((row) => ({ ...row, listing: listingById.get(row.listing_id) || null })),
+      reviews: reviewRows.map((row) => ({ ...row, listing_title: listingById.get(row.listing_id)?.title || '' })),
     },
   };
 }

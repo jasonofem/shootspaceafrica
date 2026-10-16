@@ -15,6 +15,7 @@ const NEW_MIGRATIONS = [
   'supabase/migrations/20261017000000_crew_pricing.sql',
   'supabase/migrations/20261017000100_listing_change_requests.sql',
   'supabase/migrations/20261017000200_withdrawals.sql',
+  'supabase/migrations/20261018000000_ratings_and_leaderboard.sql',
 ];
 
 function knownErrorCodes() {

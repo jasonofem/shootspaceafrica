@@ -6,6 +6,7 @@
 //   POST /api/bookings/otp                -> bookings-otp
 //   POST /api/bookings/disputes           -> bookings-disputes
 //   POST /api/bookings/dispute-evidence   -> bookings-dispute-evidence
+//   POST /api/bookings/review             -> bookings-review
 //   GET  /api/my-bookings                 -> bookings-mine
 //   GET  /api/bookings/:id                -> bookings-detail
 import { createHmac, randomInt } from 'node:crypto';
@@ -141,6 +142,24 @@ export async function registerDisputeEvidence(req, res) {
   } catch (error) { return sendError(res, error, 'Evidence could not be registered.'); }
 }
 
+// Creator rating for a completed session. Only 3-5 stars are accepted; the database
+// function submit_review re-checks creator, completion, payment, disputes and duplicates.
+export async function submitBookingReview(req, res) {
+  if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
+  try {
+    const { userClient } = await requireUser(req);
+    const body = await readBody(req);
+    if (!isUuid(body.bookingId)) return res.status(400).json({ error: 'Booking id is required.' });
+    const rating = Number(body.rating);
+    if (!Number.isInteger(rating) || rating < 3 || rating > 5) return res.status(400).json({ error: 'Choose 3, 4 or 5 stars.' });
+    const comment = typeof body.body === 'string' ? body.body.slice(0, 1000) : '';
+    const { data, error } = await userClient.rpc('submit_review', { p_booking_id: body.bookingId, p_rating: rating, p_body: comment });
+    if (error) throw error;
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(201).json(data);
+  } catch (error) { return sendError(res, error, 'Your rating could not be submitted.'); }
+}
+
 export async function bookingDetail(req, res) {
   if (req.method !== 'GET') return methodNotAllowed(res, ['GET']);
   try {
@@ -222,6 +241,7 @@ export const bookingRoutes = {
     'bookings-otp': bookingOtp,
     'bookings-disputes': openDispute,
     'bookings-dispute-evidence': registerDisputeEvidence,
+    'bookings-review': submitBookingReview,
     'bookings-detail': bookingDetail,
     'bookings-mine': myBookings,
   },
