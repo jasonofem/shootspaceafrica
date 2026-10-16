@@ -12,6 +12,7 @@ import { amenityLabels, categories, faqs, money } from './data.js';
 import { apiFetch, localDateAtLagos, makeIdempotencyKey } from './lib/api.js';
 import { publicSettings } from './config.js';
 import { supabase } from './lib/supabaseClient.js';
+import { useIsAdmin, useSession } from './lib/useSession.js';
 import { usePublicListings } from './hooks/usePublicListings.js';
 import { assessTimeSlot, parseNairaToKobo } from './lib/businessRules.js';
 
@@ -94,16 +95,48 @@ function SiteLayout({ children }) {
 function BrandMark() {
   return <img className="brand-mark" src="/images/shootspace-mark.svg" alt="" aria-hidden="true" draggable="false"/>;
 }
-function Header() {
+export function Header() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const toast = useToast();
   const [open, setOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const { session, loading } = useSession();
+  const isAdmin = useIsAdmin(session);
   useEffect(() => setOpen(false), [location.pathname]);
+  // Until the stored session is read, neither the signed-out nor the signed-in buttons are
+  // rendered, so "Sign In"/"Get Started" never flash for a signed-in user.
+  const signedIn = Boolean(session);
+  const showAccountControls = !loading;
+  const signOut = async () => {
+    if (!supabase || signingOut) return;
+    setSigningOut(true);
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      toast('Signed out.');
+      setOpen(false);
+      navigate('/');
+    } catch (error) {
+      toast(error?.message ? `Sign out failed: ${error.message}` : 'Sign out failed. Please try again.');
+    } finally {
+      setSigningOut(false);
+    }
+  };
   return <header className="site-header"><div className="header-inner">
     <Link to="/" className="brand" aria-label="ShootSpace Africa home"><BrandMark /></Link>
-    <nav className="desktop-nav" aria-label="Main navigation"><Link to="/explore">Explore</Link><Link to="/host/onboarding">Become a Host</Link><a href="/#how-it-works">How It Works</a><Link to="/signin">Sign In</Link></nav>
-    <div className="header-actions"><Link className="button button-primary button-small" to="/signup">Get Started</Link></div>
+    <nav className="desktop-nav" aria-label="Main navigation"><Link to="/explore">Explore</Link><Link to="/host/onboarding">Become a Host</Link><a href="/#how-it-works">How It Works</a>
+      {showAccountControls && (signedIn ? <><Link to="/creator-dashboard">Dashboard</Link>{isAdmin && <Link to="/admin-dashboard">Admin</Link>}</> : <Link to="/signin">Sign In</Link>)}
+    </nav>
+    <div className="header-actions">{showAccountControls && (signedIn
+      ? <button type="button" className="button button-secondary button-small" onClick={signOut} disabled={signingOut}>{signingOut ? 'Signing out…' : 'Sign out'}</button>
+      : <Link className="button button-primary button-small" to="/signup">Get Started</Link>)}</div>
     <button type="button" className="mobile-menu-button" aria-label={open ? 'Close menu' : 'Open menu'} aria-expanded={open} onClick={() => setOpen((value) => !value)}>{open ? <X size={22} /> : <Menu size={22} />}</button>
-  </div>{open && <nav className="mobile-nav" aria-label="Mobile navigation"><Link to="/explore">Explore spaces</Link><Link to="/host/onboarding">Become a host</Link><a href="/#how-it-works">How it works</a><Link to="/signin">Sign in</Link><Link className="button button-primary" to="/signup">Get Started</Link></nav>}</header>;
+  </div>{open && <nav className="mobile-nav" aria-label="Mobile navigation"><Link to="/explore">Explore spaces</Link><Link to="/host/onboarding">Become a host</Link><a href="/#how-it-works">How it works</a>
+    {showAccountControls && (signedIn
+      ? <><Link to="/creator-dashboard">Dashboard</Link>{isAdmin && <Link to="/admin-dashboard">Admin</Link>}<button type="button" className="button button-secondary" onClick={signOut} disabled={signingOut}>{signingOut ? 'Signing out…' : 'Sign out'}</button></>
+      : <><Link to="/signin">Sign in</Link><Link className="button button-primary" to="/signup">Get Started</Link></>)}
+  </nav>}</header>;
 }
 function Footer() {
   return <footer className="site-footer"><div className="footer-grid wrap">
