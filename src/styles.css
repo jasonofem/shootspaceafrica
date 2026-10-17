@@ -210,8 +210,9 @@ button.notification-item { cursor: pointer; }
 .filter-control input[type=number] { color-scheme: dark; }
 .filter-group { border-top: 1px solid var(--border-soft); margin-top: 15px; padding-top: 14px; }
 .filter-group h3 { margin: 0 0 10px; font-size: 11px; }
-.check-line { display: flex; align-items: center; gap: 8px; color: #d1cfd7; font-size: 10px; margin: 9px 0; }
-.check-line input, .remember-check input { accent-color: var(--orange); }
+.check-line { display: flex; align-items: center; gap: 8px; color: #d1cfd7; font-size: 10px; line-height: 1.5; margin: 9px 0; cursor: pointer; }
+.check-line span { flex: 1; min-width: 0; }
+.check-line input[type='checkbox'], .remember-check input[type='checkbox'] { width: 16px; height: 16px; min-width: 16px; min-height: 16px; flex: 0 0 16px; margin: 0; accent-color: var(--orange); cursor: pointer; }
 .filter-verified { border-top: 1px solid var(--border-soft); padding-top: 12px; margin-top: 14px; }
 .filter-verified svg { margin-left: auto; color: var(--green); }
 .mobile-apply, .filter-toggle { display: none; }
@@ -266,10 +267,14 @@ button.notification-item { cursor: pointer; }
 .booking-rate { display: flex; align-items: baseline; gap: 9px; margin-bottom: 16px; }
 .booking-rate strong { font-family: Manrope, sans-serif; font-size: 24px; }
 .booking-rate span { color: var(--muted); font-size: 11px; }
-.form-field { display: block; min-width: 0; margin-bottom: 10px; }
-.form-field > span { display: block; margin-bottom: 6px; color: var(--muted); font-size: 10px; }
-.form-field input, .form-field select, .contact-form input, .contact-form textarea, .dispute-form input, .dispute-form select, .dispute-form textarea, .onboarding-form input, .onboarding-form select, .onboarding-form textarea, .otp-control input { width: 100%; min-width: 0; min-height: 42px; color: #eeeef1; background: #141418; border: 1px solid var(--border); border-radius: 9px; padding: 0 12px; outline: none; font-size: 11px; }
-.form-field input:focus, .form-field select:focus, .contact-form input:focus, .contact-form textarea:focus, .dispute-form input:focus, .dispute-form textarea:focus, .onboarding-form input:focus, .onboarding-form textarea:focus { border-color: #926043; }
+.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.form-grid > .form-field, .form-grid > .field { margin-bottom: 0; }
+.form-field, .field { display: block; min-width: 0; margin-bottom: 10px; }
+.form-field > span, .field > span { display: block; margin-bottom: 6px; color: var(--muted); font-size: 10px; }
+.form-field input:where(:not([type='checkbox']):not([type='radio'])), .form-field select, .form-field textarea, .field input:where(:not([type='checkbox']):not([type='radio'])), .field select, .field textarea, .contact-form input:where(:not([type='checkbox']):not([type='radio'])), .contact-form textarea, .dispute-form input:where(:not([type='checkbox']):not([type='radio'])), .dispute-form select, .dispute-form textarea, .onboarding-form input:where(:not([type='checkbox']):not([type='radio'])), .onboarding-form select, .onboarding-form textarea, .otp-control input:where(:not([type='checkbox']):not([type='radio'])) { width: 100%; min-width: 0; min-height: 42px; color: #eeeef1; background: #141418; border: 1px solid var(--border); border-radius: 9px; padding: 0 12px; outline: none; font-size: 11px; }
+.form-field textarea, .field textarea { min-height: 90px; padding: 10px 12px; resize: vertical; }
+.form-field input:where(:not([type='checkbox']):not([type='radio'])):focus, .form-field select:focus, .form-field textarea:focus, .field input:where(:not([type='checkbox']):not([type='radio'])):focus, .field select:focus, .field textarea:focus, .contact-form input:where(:not([type='checkbox']):not([type='radio'])):focus, .contact-form textarea:focus, .dispute-form input:where(:not([type='checkbox']):not([type='radio'])):focus, .dispute-form select:focus, .dispute-form textarea:focus, .onboarding-form input:where(:not([type='checkbox']):not([type='radio'])):focus, .onboarding-form select:focus, .onboarding-form textarea:focus, .otp-control input:where(:not([type='checkbox']):not([type='radio'])):focus { border-color: #926043; }
+.form-field input:where(:not([type='checkbox']):not([type='radio'])):focus-visible, .form-field select:focus-visible, .form-field textarea:focus-visible, .field input:where(:not([type='checkbox']):not([type='radio'])):focus-visible, .field select:focus-visible, .field textarea:focus-visible, .contact-form input:where(:not([type='checkbox']):not([type='radio'])):focus-visible, .contact-form textarea:focus-visible, .dispute-form input:where(:not([type='checkbox']):not([type='radio'])):focus-visible, .dispute-form select:focus-visible, .dispute-form textarea:focus-visible, .onboarding-form input:where(:not([type='checkbox']):not([type='radio'])):focus-visible, .onboarding-form select:focus-visible, .onboarding-form textarea:focus-visible, .otp-control input:where(:not([type='checkbox']):not([type='radio'])):focus-visible { outline: 2px solid var(--orange-2); outline-offset: 2px; }
 .form-field input[type=date], .form-field input[type=time] { color-scheme: dark; }
 .booking-costs { margin: 14px 0 13px; padding-top: 10px; border-top: 1px solid var(--border); }
 .booking-costs > div { display: flex; justify-content: space-between; gap: 10px; padding: 5px 0; color: var(--muted); font-size: 10px; }
@@ -295,7 +300,9 @@ button.notification-item { cursor: pointer; }
 .auth-switch { margin: 15px 0 0 !important; color: var(--muted); font-size: 11px !important; }
 .auth-switch a { color: var(--orange-2); }
 .auth-switch a:hover { text-decoration: underline; }
-.remember-check { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; margin: 10px 0; }
+.remember-check { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 10px; line-height: 1.5; margin: 10px 0; cursor: pointer; }
+.remember-check span { flex: 1; min-width: 0; }
+.remember-check a { color: var(--orange-2); text-decoration: underline; }
 .checkout-page { display: grid; grid-template-columns: minmax(0, 1fr) 365px; gap: 30px; align-items: start; max-width: 1216px; }
 .checkout-main > .eyebrow { margin-bottom: 5px; }
 .checkout-main > h1 { margin: 0 0 18px; font-family: Manrope, sans-serif; font-size: 30px; letter-spacing: -.035em; }
@@ -412,7 +419,7 @@ button.notification-item { cursor: pointer; }
 .onboarding-step-title h2 { margin: 5px 0 0; }
 .onboarding-form { min-height: 145px; }
 .onboarding-form textarea { min-height: 90px; resize: vertical; padding-top: 12px; }
-.onboarding-form .form-grid { gap: 10px; }
+.onboarding-form .form-grid { gap: 10px; margin-bottom: 10px; }
 .upload-drop { min-height: 155px; border: 1px dashed #414149; border-radius: 11px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--muted); position: relative; cursor: pointer; text-align: center; }
 .upload-drop svg { color: var(--orange-2); }
 .upload-drop strong { color: #dad8de; font-size: 12px; }
@@ -438,11 +445,12 @@ button.notification-item { cursor: pointer; }
 .publish-complete p { color: var(--muted); font-size: 12px; line-height: 1.55; }
 .publish-complete .button-row { justify-content: center; margin-top: 18px; }
 .terms-check { margin: 14px 0; align-items: flex-start; line-height: 1.5; }
-.terms-check input { flex: 0 0 auto; margin-top: 2px; }
+.terms-check input[type='checkbox'] { margin-top: 2px; }
 .terms-check a { color: var(--orange-2); text-decoration: underline; }
 .availability-editor { display: grid; gap: 7px; }
 .availability-day { display: grid; grid-template-columns: minmax(95px,1fr) minmax(100px,.8fr) 20px minmax(100px,.8fr); align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: #141418; color: var(--muted); font-size: 10px; }
-.availability-day input[type=time] { width: 100%; min-width: 0; height: 34px; padding: 0 7px; color: var(--text); border: 1px solid var(--border); border-radius: 6px; background: #101014; color-scheme: dark; }
+.availability-day .remember-check { margin: 0; }
+.availability-day input[type=time] { width: 100%; min-width: 0; min-height: 34px; height: 34px; padding: 0 7px; color: var(--text); border: 1px solid var(--border); border-radius: 6px; background: #101014; color-scheme: dark; }
 .availability-day input:disabled { opacity: .38; }
 
 /* OTP room, contact, disputes */
